@@ -278,13 +278,14 @@ export class SandboxManager {
       const files: Array<{ path: string; content: Buffer }> = []
 
       for (const [filename, file] of Object.entries(gist.files)) {
+        const content = this.sanitizeOpenCodeConfig(filename, file.content || "")
         const targetPath = filename.endsWith(".jsonc") || filename.endsWith(".json")
           ? `${targetDir}/${filename}`
           : `${targetDir}/${filename}`
 
         files.push({
           path: targetPath,
-          content: Buffer.from(file.content || ""),
+          content: Buffer.from(content),
         })
       }
 
@@ -295,6 +296,20 @@ export class SandboxManager {
     } catch (error) {
       console.log(`[SandboxManager] Failed to inject user config:`, error)
     }
+  }
+
+  private sanitizeOpenCodeConfig(filename: string, content: string): string {
+    if (filename !== "opencode.jsonc" && filename !== "opencode.json") {
+      return content
+    }
+
+    return content
+      .replace(/^\s*"projectId"\s*:\s*.*?,?\s*$/gm, "")
+      .replace(/^\s*"orgId"\s*:\s*.*?,?\s*$/gm, "")
+      .replace(/^\s*"projectName"\s*:\s*.*?,?\s*$/gm, "")
+      .replace(/^\s*'projectId'\s*:\s*.*?,?\s*$/gm, "")
+      .replace(/^\s*'orgId'\s*:\s*.*?,?\s*$/gm, "")
+      .replace(/^\s*'projectName'\s*:\s*.*?,?\s*$/gm, "")
   }
 
   private async waitForOpenCode(sandbox: Sandbox, port: number, maxAttempts = 30): Promise<void> {

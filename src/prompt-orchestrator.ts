@@ -59,6 +59,10 @@ export async function executePromptForChannel(
   credentials: CredentialStore,
   stateStore: ChannelStateStore,
   channelId: string,
+  selection: {
+    providerId: string
+    modelId: string
+  },
   prompt: string,
   sink: EventRelaySink,
   options: {
@@ -67,37 +71,32 @@ export async function executePromptForChannel(
   } = {},
 ): Promise<{ ok: true; hadError?: boolean } | { ok: false; message: string }> {
   const state = stateStore.get(channelId)
-  if (!state.activeProviderId) {
-    return { ok: false, message: "No active provider. Run: use provider <provider>" }
-  }
-  if (!state.activeModelId) {
-    return { ok: false, message: "No active model. Run: use model <model>" }
-  }
+  const { providerId, modelId } = selection
 
   await runtime.syncRegistry(registry)
 
   const client = toClient(runtime)
-  const authResult = await ensureProviderAuth(client, registry, credentials, state.activeProviderId)
+  const authResult = await ensureProviderAuth(client, registry, credentials, providerId)
   if (authResult.type === "needs_local_oauth") {
     return {
       ok: false,
-      message: `Provider '${state.activeProviderId}' needs local OAuth setup. Run: bridge auth connect ${state.activeProviderId}`,
+      message: `Provider '${providerId}' needs local OAuth setup. Run: bridge auth connect ${providerId}`,
     }
   }
   if (authResult.type === "needs_local_api_key") {
     return {
       ok: false,
-      message: `Provider '${state.activeProviderId}' needs local API key setup. Run: bridge auth set-key ${state.activeProviderId} --stdin`,
+      message: `Provider '${providerId}' needs local API key setup. Run: bridge auth set-key ${providerId} --stdin`,
     }
   }
 
   let sessionId: string
   if (options.forceNewSession) {
-    const profileKey = `${state.activeProviderId}:${state.activeModelId}`
+    const profileKey = `${providerId}:${modelId}`
     sessionId = await runtime.createSession(`discord-${channelId}-${profileKey}`)
-    stateStore.setSessionForActiveProfile(channelId, sessionId)
+    stateStore.setSessionForProfile(channelId, providerId, modelId, sessionId)
   } else {
-    sessionId = await resolveSessionForActiveProfile(client, stateStore, channelId)
+    sessionId = await resolveSessionForActiveProfile(client, stateStore, channelId, providerId, modelId)
   }
 
   const relayPromise = relaySessionEvents(client, sink, sessionId, {

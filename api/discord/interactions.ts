@@ -28,6 +28,14 @@ type Interaction = {
   token: string
   application_id: string
   channel_id?: string
+  member?: {
+    user?: {
+      id: string
+    }
+  }
+  user?: {
+    id: string
+  }
   message?: {
     id: string
   }
@@ -167,6 +175,28 @@ async function sendChunkedInteractionResponse(interaction: Interaction, res: { s
   }
 }
 
+function getInteractionUserId(interaction: Interaction): string | undefined {
+  return interaction.member?.user?.id || interaction.user?.id
+}
+
+async function isThreadChannel(channelId: string): Promise<boolean> {
+  const token = process.env.DISCORD_BOT_TOKEN
+  if (!token) {
+    return false
+  }
+
+  const response = await fetch(`https://discord.com/api/v10/channels/${channelId}`, {
+    headers: { Authorization: `Bot ${token}` },
+  }).catch(() => null)
+
+  if (!response?.ok) {
+    return false
+  }
+
+  const data = (await response.json()) as { type?: number }
+  return data.type === 11 || data.type === 12
+}
+
 function getCommandOption(
   options: Interaction["data"]["options"] | undefined,
   name: string,
@@ -290,12 +320,13 @@ function renderModelsPage(
 }
 
 async function handleAutocompleteInteraction(interaction: Interaction): Promise<Response> {
-  const [{ loadProviderRegistry }, { ChannelStateStore }] = await Promise.all([
+  const [{ loadProviderRegistry }, { SelectionStore }] = await Promise.all([
     import("../../src/provider-registry-store.js"),
-    import("../../src/channel-state-store.js"),
+    import("../../src/selection-store.js"),
   ])
 
   const registry = await loadProviderRegistry()
+  const selectionStore = new SelectionStore()
   const focused = getFocusedOption(interaction.data)
   if (!focused) {
     return autocompleteChoices([])
@@ -313,10 +344,11 @@ async function handleAutocompleteInteraction(interaction: Interaction): Promise<
   }
 
   if (focused.name === "model") {
-    const stateStore = new ChannelStateStore()
-    const state = stateStore.get(interaction.channel_id || "dm")
+    const userId = getInteractionUserId(interaction)
+    const threadId = interaction.channel_id && await isThreadChannel(interaction.channel_id) ? interaction.channel_id : undefined
+    const selection = userId ? await selectionStore.resolveSelection(userId, threadId) : undefined
     const providerOption = getCommandOption(interaction.data.options, "provider")
-    const providerId = typeof providerOption?.value === "string" ? providerOption.value : state.activeProviderId
+    const providerId = typeof providerOption?.value === "string" ? providerOption.value : selection?.providerId
     if (!providerId) {
       return autocompleteChoices([])
     }
@@ -708,6 +740,7 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
     { getSandboxManager },
     { getRecoveryContext },
     { loadProviderRegistry },
+    { SelectionStore },
   ] = await Promise.all([
     import("../../src/channel-state-store.js"),
     import("../../src/credential-store.js"),
@@ -716,25 +749,29 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
     import("../../src/sandbox-manager.js"),
     import("../../src/discord-message-fetcher.js"),
     import("../../src/provider-registry-store.js"),
+    import("../../src/selection-store.js"),
   ])
 
   const channelId = interaction.channel_id
   const messageId = interaction.message?.id
+  const userId = getInteractionUserId(interaction)
 
-  if (!channelId) {
+  if (!channelId || !userId) {
     await sendFollowup(
       interaction.application_id,
       interaction.token,
-      "Missing channel ID.",
+      !channelId ? "Missing channel ID." : "Missing user ID.",
     )
     return
   }
 
   const stateStore = new ChannelStateStore()
-  const state = stateStore.get(channelId)
+  const selectionStore = new SelectionStore()
+  const channelState = stateStore.get(channelId)
+  const commandIsInThread = await isThreadChannel(channelId)
 
   // Create or reuse thread for this conversation
-  let threadId = state.threadId
+  let threadId = commandIsInThread ? channelId : channelState.threadId
 
   if (!threadId && messageId) {
     // Create a new thread from the command message
@@ -757,27 +794,48 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
     if (threadResponse?.ok) {
       const thread = (await threadResponse.json()) as { id: string }
       threadId = thread.id
-      state.threadId = threadId
-      stateStore.set(state)
+      channelState.threadId = threadId
+      stateStore.set(channelState)
+      stateStore.set({
+        channelId: threadId,
+        repoUrl: channelState.repoUrl,
+        branch: channelState.branch,
+        projectName: channelState.projectName,
+        sessionByProfile: {},
+      })
     }
   }
 
   // If no thread and no message ID, we'll use channel-level followups
   const effectiveThreadId = threadId || undefined
+  const conversationId = effectiveThreadId || channelId
+  const conversationState = stateStore.get(conversationId)
+
+  const selection = await selectionStore.resolveSelection(userId, effectiveThreadId)
+  if (!selection?.providerId || !selection?.modelId) {
+    await sendFollowup(
+      interaction.application_id,
+      interaction.token,
+      "No default provider/model configured. Run `/use-provider <provider>` and `/use-model <model>` in any normal channel first.",
+      undefined,
+      effectiveThreadId,
+    )
+    return
+  }
 
   let repoUrl: string | undefined
   let branch = "main"
-  if (state.repoUrl) {
-    repoUrl = state.repoUrl
-    branch = state.branch || "main"
+  if (conversationState.repoUrl || channelState.repoUrl) {
+    repoUrl = conversationState.repoUrl || channelState.repoUrl
+    branch = conversationState.branch || channelState.branch || "main"
   }
 
   const sandboxManager = getSandboxManager()
   let sandboxContext: SandboxContext
-  const oldSandboxId = state.sandboxId
+  const oldSandboxId = conversationState.sandboxId
 
   try {
-    sandboxContext = await sandboxManager.getOrCreate(channelId, state.sandboxId, repoUrl, branch)
+    sandboxContext = await sandboxManager.getOrCreate(conversationId, conversationState.sandboxId, repoUrl, branch)
   } catch (error) {
     console.error("Failed to get/create sandbox:", error)
     await sendFollowup(
@@ -789,8 +847,8 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
   }
 
   // Update state with sandbox ID for future resumption
-  state.sandboxId = sandboxContext.sandboxId
-  stateStore.set(state)
+  conversationState.sandboxId = sandboxContext.sandboxId
+  stateStore.set(conversationState)
 
   const runtime = new OpencodeRuntime(sandboxContext.opencodeBaseUrl, sandboxContext.opencodePassword)
   const credentials = new CredentialStore()
@@ -800,7 +858,7 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
   const isNewSandbox = oldSandboxId && oldSandboxId !== sandboxContext.sandboxId
 
   // Warn user about lost local changes if sandbox expired
-  if (isNewSandbox && state.repoUrl) {
+  if (isNewSandbox && repoUrl) {
     await sendFollowup(
       interaction.application_id,
       interaction.token,
@@ -811,7 +869,7 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
   }
 
   const recoveryContext = isNewSandbox
-    ? await getRecoveryContext(stateStore, channelId, prompt)
+    ? await getRecoveryContext(stateStore, conversationId, prompt)
     : undefined
 
   let responseBuffer = ""
@@ -823,7 +881,11 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
     registry,
     credentials,
     stateStore,
-    channelId,
+    conversationId,
+    {
+      providerId: selection.providerId,
+      modelId: selection.modelId,
+    },
     prompt,
     {
       onTextDelta: async (text) => {
@@ -968,12 +1030,13 @@ export default async function handler(
       return
     }
 
-    const [{ mapInteractionCommandToText }, { parseDiscordCommand }, { ChannelStateStore }, { CredentialStore }, { handleDiscordCommand }] = await Promise.all([
+    const [{ mapInteractionCommandToText }, { parseDiscordCommand }, { ChannelStateStore }, { CredentialStore }, { handleDiscordCommand }, { SelectionStore }] = await Promise.all([
       import("../../src/interaction-command-mapper.js"),
       import("../../src/command-parser.js"),
       import("../../src/channel-state-store.js"),
       import("../../src/credential-store.js"),
       import("../../src/discord-command-service.js"),
+      import("../../src/selection-store.js"),
     ])
 
     const mapped = mapInteractionCommandToText(interaction.data)
@@ -1013,7 +1076,11 @@ export default async function handler(
     const registry = await loadProviderRegistry()
     const stateStore = new ChannelStateStore()
     const credentials = new CredentialStore()
+    const selectionStore = new SelectionStore()
     const parsed = parseDiscordCommand(mapped.text)
+    const userId = getInteractionUserId(interaction)
+    const currentChannelId = interaction.channel_id || "dm"
+    const inThread = interaction.channel_id ? await isThreadChannel(interaction.channel_id) : false
 
     if (parsed.type === "providers") {
       const page = renderProvidersPage(registry, credentials.listProviders(), 0)
@@ -1022,8 +1089,8 @@ export default async function handler(
     }
 
     if (parsed.type === "models") {
-      const state = stateStore.get(interaction.channel_id || "dm")
-      const providerId = parsed.providerId || state.activeProviderId
+      const selection = userId ? await selectionStore.resolveSelection(userId, inThread ? currentChannelId : undefined) : undefined
+      const providerId = parsed.providerId || selection?.providerId
       if (!providerId) {
         await sendChunkedInteractionResponse(interaction, res, "No active provider. Run: /models <provider> or /use-provider <provider>")
         return
@@ -1034,9 +1101,101 @@ export default async function handler(
       return
     }
 
+    if (parsed.type === "use_provider") {
+      if (!userId) {
+        await sendChunkedInteractionResponse(interaction, res, "Missing user ID.")
+        return
+      }
+      if (!registry.hasProvider(parsed.providerId)) {
+        await sendChunkedInteractionResponse(interaction, res, `Unknown provider '${parsed.providerId}'. Run: /providers`)
+        return
+      }
+
+      const userDefaults = await selectionStore.getUserDefaults(userId)
+      if (inThread && (!userDefaults?.providerId || !userDefaults?.modelId)) {
+        await sendChunkedInteractionResponse(
+          interaction,
+          res,
+          "No default provider/model configured. Run `/use-provider <provider>` and `/use-model <model>` in any normal channel first.",
+        )
+        return
+      }
+
+      const existing = inThread
+        ? await selectionStore.initializeThreadFromUser(currentChannelId, userId)
+        : userDefaults
+
+      const nextSelection = {
+        providerId: parsed.providerId,
+        modelId: existing?.modelId && registry.hasModel(parsed.providerId, existing.modelId) ? existing.modelId : undefined,
+      }
+
+      if (inThread) {
+        await selectionStore.setThreadSelection(currentChannelId, nextSelection)
+        await sendChunkedInteractionResponse(interaction, res, `Thread provider set to '${parsed.providerId}'. Run: /models`) 
+        return
+      }
+
+      await selectionStore.setUserDefaults(userId, nextSelection)
+      await sendChunkedInteractionResponse(interaction, res, `Default provider set to '${parsed.providerId}'. Run: /models`) 
+      return
+    }
+
+    if (parsed.type === "use_model") {
+      if (!userId) {
+        await sendChunkedInteractionResponse(interaction, res, "Missing user ID.")
+        return
+      }
+
+      const userDefaults = await selectionStore.getUserDefaults(userId)
+      if (inThread && (!userDefaults?.providerId || !userDefaults?.modelId)) {
+        await sendChunkedInteractionResponse(
+          interaction,
+          res,
+          "No default provider/model configured. Run `/use-provider <provider>` and `/use-model <model>` in any normal channel first.",
+        )
+        return
+      }
+
+      const selection = inThread
+        ? await selectionStore.initializeThreadFromUser(currentChannelId, userId)
+        : userDefaults
+
+      if (!selection?.providerId) {
+        await sendChunkedInteractionResponse(
+          interaction,
+          res,
+          inThread
+            ? "No provider configured for this thread. Run: /use-provider <provider> in this thread first."
+            : "No default provider configured. Run: /use-provider <provider> first.",
+        )
+        return
+      }
+
+      if (!registry.hasModel(selection.providerId, parsed.modelId)) {
+        const matchingProviders = registry.findProvidersForModel(parsed.modelId)
+        const message = matchingProviders.length > 0
+          ? `Model '${parsed.modelId}' does not belong to provider '${selection.providerId}'. It is available under: ${matchingProviders.join(", ")}. Run: /use-provider <provider> first.`
+          : `Unknown model '${parsed.modelId}' for provider '${selection.providerId}'. Run: /models ${selection.providerId}`
+        await sendChunkedInteractionResponse(interaction, res, message)
+        return
+      }
+
+      const nextSelection = { providerId: selection.providerId, modelId: parsed.modelId }
+      if (inThread) {
+        await selectionStore.setThreadSelection(currentChannelId, nextSelection)
+        await sendChunkedInteractionResponse(interaction, res, `Thread model set to '${parsed.modelId}'.`)
+        return
+      }
+
+      await selectionStore.setUserDefaults(userId, nextSelection)
+      await sendChunkedInteractionResponse(interaction, res, `Default model set to '${parsed.modelId}'.`)
+      return
+    }
+
     const commandResult = handleDiscordCommand(
       mapped.text,
-      { channelId: interaction.channel_id || "dm" },
+      { channelId: currentChannelId },
       stateStore,
       registry,
       credentials,

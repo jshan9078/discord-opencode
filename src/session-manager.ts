@@ -9,14 +9,12 @@ export async function resolveSessionForActiveProfile(
   client: RuntimeClientAdapter,
   stateStore: ChannelStateStore,
   channelId: string,
+  providerId: string,
+  modelId: string,
 ): Promise<string> {
-  const state = stateStore.get(channelId)
-  const key = state.activeProviderId && state.activeModelId
-    ? `${state.activeProviderId}:${state.activeModelId}`
-    : null
-
-  if (key && state.sessionByProfile?.[key]) {
-    return state.sessionByProfile[key]
+  const existing = stateStore.getSessionForProfile(channelId, providerId, modelId)
+  if (existing) {
+    return existing
   }
 
   const created = await client.session.create({
@@ -24,12 +22,7 @@ export async function resolveSessionForActiveProfile(
   })
   const sessionId = created.data.id
 
-  if (key) {
-    const newState = stateStore.get(channelId)
-    newState.sessionByProfile ||= {}
-    newState.sessionByProfile[key] = sessionId
-    stateStore.set(newState)
-  }
+  stateStore.setSessionForProfile(channelId, providerId, modelId, sessionId)
 
   return sessionId
 }

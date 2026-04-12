@@ -39,7 +39,19 @@ cd discord-bridge
 pnpm install
 ```
 
-### 3. Configure Environment Variables
+### 3. Create Vercel Blob Store
+
+In the Vercel dashboard, add Blob to this project.
+
+That will provision Blob storage and inject:
+
+```text
+BLOB_READ_WRITE_TOKEN
+```
+
+The bridge uses Blob to store the durable provider registry snapshot for `/providers`, `/models`, and `/ask`.
+
+### 4. Configure Environment Variables
 
 Set these in your Vercel project first. You can do that either in the Vercel dashboard or with `vercel env add`.
 
@@ -87,14 +99,14 @@ Notes:
 - `.env.local` is just a local copy used by scripts in this repo
 - `vercel env pull` does not set remote env vars, it only downloads them locally
 
-### 4. Register Slash Commands
+### 5. Register Slash Commands
 
 ```bash
 pnpm tsx scripts/register-commands.ts
 # (uses .env.local values - run `vercel env pull` first to get them)
 ```
 
-### 5. Set Discord Interactions URL
+### 6. Set Discord Interactions URL
 
 In the Discord Developer Portal for your application, set:
 
@@ -113,7 +125,7 @@ Discord will verify this URL immediately, so make sure:
 - `DISCORD_PUBLIC_KEY` in Vercel matches the same Discord application
 - the URL uses HTTPS and points to `/api/discord/interactions`
 
-### 6. Initialize Provider Registry
+### 7. Initialize Provider Registry
 
 Run this once in Discord after the interactions URL is working:
 
@@ -126,7 +138,21 @@ Run `/update` again any time you want the latest provider/model list.
 
 This requires Vercel Blob to be configured for the project.
 
-### 7. Set Provider Credentials
+### 8. Set Default Provider And Model
+
+In any normal Discord channel, set your default provider and model:
+
+```text
+/use-provider openai
+/use-model gpt-5
+```
+
+Those defaults are stored in Blob per user.
+
+When you run commands inside a bridge thread, the thread starts from your global defaults and can override them independently.
+If you have not set global defaults yet, the thread will tell you to do that first.
+
+### 9. Set Provider Credentials
 
 **Option 1: API Keys (env vars)**
 ```bash
@@ -155,8 +181,8 @@ ANTHROPIC_API_KEY=sk-ant-... # Anthropic
 | `/update` | Refresh provider registry snapshot |
 | `/providers` | List available providers |
 | `/models [provider]` | List available models (provider autocomplete) |
-| `/use-provider <id>` | Switch provider (autocomplete) |
-| `/use-model <id>` | Switch model (autocomplete) |
+| `/use-provider <id>` | Set default provider, or override provider inside a thread |
+| `/use-model <id>` | Set default model, or override model inside a thread |
 | `/auth-connect <provider>` | OAuth flow for providers (e.g., chatgpt) |
 
 ## Pricing

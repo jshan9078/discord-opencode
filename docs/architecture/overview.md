@@ -16,7 +16,7 @@ Vercel Functions (Fluid Compute)
     └─► api/discord/interactions.ts
             │
             ├─► Command parsing & routing
-            ├─► Channel state management
+            ├─► Conversation state + selection management
             ├─► Project selection (GitHub API)
             │
             └─► OpenCode Runtime (HTTP)
@@ -59,13 +59,14 @@ Inside each sandbox, OpenCode runs as an HTTP server:
 - **Session state**: Preserved between prompts
 - **Events**: SSE stream for real-time updates
 
-### 4. Single-User Credential Strategy
+### 4. Selection And Credential Strategy
 
 As a self-hosted tool, the bridge maintains one canonical credential bundle:
 
 - **Provider auth**: OAuth tokens, API keys stored encrypted locally
 - **GitHub token**: For repo/branch selection and `gh` CLI
-- **No per-channel prompts**: Credentials sync to any sandbox
+- **User defaults**: Provider/model defaults stored per user in Blob
+- **Thread overrides**: Each thread can override provider/model independently
 
 ---
 
@@ -82,7 +83,7 @@ As a self-hosted tool, the bridge maintains one canonical credential bundle:
 
 ### Prompt Execution
 
-1. **Load** channel state (provider, model, project, session)
+1. **Load** conversation state (project, sandbox, session) and resolve provider/model from user defaults + thread override
 2. **Sync** provider registry from OpenCode server
 3. **Bootstrap** credentials into runtime
 4. **Resolve** or create OpenCode session

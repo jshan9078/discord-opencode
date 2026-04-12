@@ -101,38 +101,29 @@ export class ChannelStateStore {
     return state
   }
 
-  getProfileKey(state: ChannelState): string | undefined {
-    if (!state.activeProviderId || !state.activeModelId) {
-      return undefined
-    }
-    return `${state.activeProviderId}:${state.activeModelId}`
+  getProfileKeyForSelection(providerId: string, modelId: string): string {
+    return `${providerId}:${modelId}`
   }
 
-  setSessionForActiveProfile(channelId: string, sessionId: string): ChannelState {
+  setSessionForProfile(channelId: string, providerId: string, modelId: string, sessionId: string): ChannelState {
     const state = this.get(channelId)
-    const key = this.getProfileKey(state)
-    if (!key) {
-      throw new Error("Cannot set session without active provider and model")
-    }
+    const key = this.getProfileKeyForSelection(providerId, modelId)
     state.sessionByProfile ||= {}
     state.sessionByProfile[key] = sessionId
     this.set(state)
     return state
   }
 
-  getSessionForActiveProfile(channelId: string): string | undefined {
+  getSessionForProfile(channelId: string, providerId: string, modelId: string): string | undefined {
     const state = this.get(channelId)
-    const key = this.getProfileKey(state)
-    if (!key) {
-      return undefined
-    }
+    const key = this.getProfileKeyForSelection(providerId, modelId)
     return state.sessionByProfile?.[key]
   }
 
-  clearSessionForActiveProfile(channelId: string): boolean {
+  clearSessionForProfile(channelId: string, providerId: string, modelId: string): boolean {
     const state = this.get(channelId)
-    const key = this.getProfileKey(state)
-    if (!key || !state.sessionByProfile?.[key]) {
+    const key = this.getProfileKeyForSelection(providerId, modelId)
+    if (!state.sessionByProfile?.[key]) {
       return false
     }
 

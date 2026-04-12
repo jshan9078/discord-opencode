@@ -108,7 +108,7 @@ Shows model IDs and whether they're currently active.
 
 ### /use-provider
 
-Set the active provider for the channel.
+Set your default provider, or override the provider inside the current thread.
 
 ```
 /use-provider openai
@@ -118,11 +118,14 @@ Set the active provider for the channel.
 **Options:**
 - `provider` (required): Provider ID, with autocomplete suggestions
 
-Sets the provider for subsequent `/ask` commands. Creates a new session.
+Behavior:
+- In a normal channel: updates your global default provider
+- In a thread: updates only that thread's provider override
+- If the current model does not belong to the new provider, the model is cleared
 
 ### /use-model
 
-Set the active model for the channel.
+Set your default model, or override the model inside the current thread.
 
 ```
 /use-model openai/gpt-4.1
@@ -132,7 +135,11 @@ Set the active model for the channel.
 **Options:**
 - `model` (required): Model ID (format: `provider/model`), with autocomplete suggestions
 
-Sets the model for subsequent `/ask` commands. Creates a new session.
+Behavior:
+- In a normal channel: updates your global default model
+- In a thread: updates only that thread's model override
+- Requires a provider to already be selected in that scope
+- Validates that the model belongs to the selected provider
 
 ### /auth-connect
 

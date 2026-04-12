@@ -261,10 +261,11 @@ export class SandboxManager {
     }
 
     const logResult = await sandbox.runCommand({
-      cmd: "cat",
-      args: ["/tmp/opencode.log"],
-    }).catch(() => ({ stdout: "", stderr: "Could not read log" }))
-    console.error(`[SandboxManager] OpenCode startup log: ${logResult.stdout || logResult.stderr}`)
+      cmd: "bash",
+      args: ["-c", "cat /tmp/opencode.log 2>/dev/null || echo '(log missing)'"],
+    }).catch(() => null)
+    const logText = logResult?.stdout || "(could not read log)"
+    console.error(`[SandboxManager] OpenCode startup log: ${logText}`)
 
     throw new Error("OpenCode server failed to start")
   }

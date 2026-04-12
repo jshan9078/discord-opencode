@@ -130,13 +130,16 @@ export class SandboxManager {
     // Install OpenCode if needed
     await this.ensureOpenCodeInstalled(sandbox)
 
-    // Start OpenCode server
+    // Inject credentials from env vars into sandbox env
+    const envPrefix = this.buildCredentialsEnv()
+
+    // Start OpenCode server with injected credentials
     console.log(`[SandboxManager] Starting OpenCode server`)
     await sandbox.runCommand({
       cmd: "bash",
       args: [
         "-lc",
-        `OPENCODE_SERVER_PASSWORD=${password} nohup opencode serve --hostname 0.0.0.0 --port ${port} >/tmp/opencode.log 2>&1 &`,
+        `${envPrefix} OPENCODE_SERVER_PASSWORD=${password} nohup opencode serve --hostname 0.0.0.0 --port ${port} >/tmp/opencode.log 2>&1 &`,
       ],
     })
 
@@ -148,6 +151,16 @@ export class SandboxManager {
       opencodeBaseUrl: `https://${sandbox.sandboxId}.vercel.app`,
       opencodePassword: password,
     }
+  }
+
+  private buildCredentialsEnv(): string {
+    const parts: string[] = []
+    for (const key of Object.keys(process.env)) {
+      if (key.endsWith("_API_KEY") && key !== "GITHUB_TOKEN") {
+        parts.push(`${key}=${process.env[key]} `)
+      }
+    }
+    return parts.join("")
   }
 
   private async ensureOpenCodeInstalled(sandbox: Sandbox): Promise<void> {
@@ -262,9 +275,44 @@ export class SandboxManager {
     }
 
     const data = (await response.json()) as { data?: Record<string, unknown> }
+    const tokens = data.data
+
+    if (tokens) {
+      // Save tokens directly to sandbox filesystem
+      await this.saveCredentialsToSandbox(context.sandboxId, providerId, tokens)
+    }
+
     return {
       success: true,
-      tokens: data.data,
+      tokens,
+    }
+  }
+
+  private async saveCredentialsToSandbox(sandboxId: string, providerId: string, tokens: Record<string, unknown>): Promise<void> {
+    try {
+      const sandbox = await Sandbox.get({ sandboxId })
+
+      // Read existing credentials
+      let existing: Record<string, Record<string, unknown>> = {}
+      try {
+        const content = await sandbox.readFileToBuffer({ path: "/vercel/sandbox/.opencode-credentials.json" })
+        if (content) {
+          existing = JSON.parse(content.toString())
+        }
+      } catch {
+        // No existing credentials
+      }
+
+      // Add new provider credentials
+      existing[providerId] = tokens
+
+      // Write back
+      await sandbox.writeFiles([
+        { path: "/vercel/sandbox/.opencode-credentials.json", content: Buffer.from(JSON.stringify(existing, null, 2)) },
+      ])
+      console.log(`[SandboxManager] Saved OAuth tokens for '${providerId}' to sandbox`)
+    } catch (error) {
+      console.error(`[SandboxManager] Failed to save credentials to sandbox:`, error)
     }
   }
 

@@ -270,9 +270,6 @@ async function handleAuthConnect(interaction: Interaction, text: string): Promis
       )
 
       if (completeResult.success && completeResult.tokens) {
-        const credentials = new CredentialStore(process.env.BRIDGE_SECRET || "")
-        credentials.setProviderAuth(providerId, completeResult.tokens as Record<string, unknown>)
-
         state.pendingOAuth = undefined
         stateStore.set(state)
 

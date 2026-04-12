@@ -129,6 +129,7 @@ export class SandboxManager {
 
     // Install OpenCode if needed
     await this.ensureOpenCodeInstalled(sandbox)
+    const opencodePath = await this.resolveOpenCodePath(sandbox)
 
     // Fetch and inject user config from gist if configured
     await this.injectUserConfig(sandbox)
@@ -142,7 +143,7 @@ export class SandboxManager {
       cmd: "bash",
       args: [
         "-lc",
-        `${envPrefix} PATH="$HOME/.local/bin:$PATH" OPENCODE_SERVER_PASSWORD=${password} nohup /root/.local/bin/opencode serve --hostname 0.0.0.0 --port ${port} >/tmp/opencode.log 2>&1 &`,
+        `${envPrefix} PATH="$HOME/.local/bin:$PATH" OPENCODE_SERVER_PASSWORD=${password} nohup ${opencodePath} serve --hostname 0.0.0.0 --port ${port} >/tmp/opencode.log 2>&1 &`,
       ],
     })
 
@@ -180,13 +181,13 @@ export class SandboxManager {
     console.log(`[SandboxManager] Installing OpenCode`)
     const installResult = await sandbox.runCommand({
       cmd: "bash",
-      args: ["-lc", "curl -LsSf https://opencode.ai/install.sh 2>&1 | head -20"],
+      args: ["-lc", "curl -LsSf https://opencode.ai/install 2>&1 | head -20"],
     }).catch(() => null)
     console.error(`[SandboxManager] Install script preview: ${installResult ? await installResult.stdout() : "curl failed"}`)
 
     await sandbox.runCommand({
       cmd: "bash",
-      args: ["-lc", "curl -LsSf https://opencode.ai/install.sh 2>&1 | sh"],
+      args: ["-lc", "curl -fsSL https://opencode.ai/install | bash"],
     })
 
     // Ensure executable permission
@@ -200,6 +201,31 @@ export class SandboxManager {
       args: ["-c", "ls -la ~/.local/bin/ 2>/dev/null || echo 'no .local/bin'; echo '---'; echo PATH=$PATH"],
     }).catch(() => null)
     console.error(`[SandboxManager] After install: ${afterInstall ? await afterInstall.stdout() : "error"}`)
+
+    const verifyResult = await sandbox.runCommand({
+      cmd: "bash",
+      args: ["-lc", "command -v opencode >/dev/null 2>&1 || [ -x \"$HOME/.local/bin/opencode\" ]"],
+    }).catch(() => ({ exitCode: 1 }))
+
+    if (verifyResult.exitCode !== 0) {
+      throw new Error("OpenCode installation completed but executable not found")
+    }
+  }
+
+  private async resolveOpenCodePath(sandbox: Sandbox): Promise<string> {
+    const result = await sandbox.runCommand({
+      cmd: "bash",
+      args: [
+        "-lc",
+        "if command -v opencode >/dev/null 2>&1; then command -v opencode; elif [ -x \"$HOME/.local/bin/opencode\" ]; then echo \"$HOME/.local/bin/opencode\"; elif [ -f \"$HOME/.local/bin/opencode\" ]; then chmod +x \"$HOME/.local/bin/opencode\" && echo \"$HOME/.local/bin/opencode\"; else exit 1; fi",
+      ],
+    }).catch(() => null)
+
+    const path = (result ? await result.stdout() : "").trim()
+    if (!path) {
+      throw new Error("OpenCode executable path could not be resolved")
+    }
+    return path
   }
 
   private async injectUserConfig(sandbox: Sandbox): Promise<void> {
@@ -294,7 +320,7 @@ export class SandboxManager {
     await runAndLog("OpenCode locations", "bash", ["-c", "ls -la ~/.local/bin/opencode 2>/dev/null || echo 'not in ~/.local/bin'; ls -la /usr/local/bin/opencode 2>/dev/null || echo 'not in /usr/local/bin'; which opencode 2>&1"])
     await runAndLog("OpenCode type", "bash", ["-c", "type opencode 2>&1 || echo 'not found'"])
     await runAndLog("OpenCode version", "bash", ["-c", "opencode --version 2>&1 || echo 'version failed'"])
-    await runAndLog("Direct opencode", "bash", ["-c", "/root/.local/bin/opencode --version 2>&1 || echo 'direct failed'"])
+    await runAndLog("Direct opencode", "bash", ["-c", "$HOME/.local/bin/opencode --version 2>&1 || echo 'direct failed'"])
     await runAndLog("OpenCode env vars", "bash", ["-c", "env | grep -i opencode || echo 'no opencode env'"])
     await runAndLog("Install locations", "bash", ["-c", "ls -la ~/.bun/install/ 2>/dev/null || echo 'no bun install'; ls -la ~/.local/share/opencode/bin/ 2>/dev/null || echo 'no opencode bin'"])
 

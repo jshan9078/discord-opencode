@@ -39,6 +39,8 @@ const DEFAULT_OPTIONS: Required<SandboxManagerOptions> = {
   persistent: true,
 }
 
+const OPENCODE_PORT = 4096
+
 export class SandboxManager {
   private readonly options: Required<SandboxManagerOptions>
   private readonly cache = new Map<string, SandboxContext>()
@@ -90,6 +92,7 @@ export class SandboxManager {
       runtime: this.options.runtime,
       resources: { vcpus: this.options.vcpus },
       timeout: this.options.timeout,
+      ports: [OPENCODE_PORT],
     }
 
     if (repoUrl) {
@@ -110,7 +113,8 @@ export class SandboxManager {
 
   private async ensureOpenCodeServer(sandbox: Sandbox): Promise<SandboxContext> {
     const password = generatePassword()
-    const port = 4096
+    const port = OPENCODE_PORT
+    const opencodeBaseUrl = this.getOpenCodeBaseUrl(sandbox)
 
     // Check if OpenCode is already running
     const checkResult = await sandbox.runCommand({
@@ -122,7 +126,7 @@ export class SandboxManager {
       console.log(`[SandboxManager] OpenCode server already running`)
       return {
         sandboxId: sandbox.sandboxId,
-        opencodeBaseUrl: `https://${sandbox.sandboxId}.vercel.app`,
+        opencodeBaseUrl,
         opencodePassword: password,
       }
     }
@@ -152,9 +156,13 @@ export class SandboxManager {
 
     return {
       sandboxId: sandbox.sandboxId,
-      opencodeBaseUrl: `https://${sandbox.sandboxId}.vercel.app`,
+      opencodeBaseUrl,
       opencodePassword: password,
     }
+  }
+
+  private getOpenCodeBaseUrl(sandbox: Sandbox): string {
+    return sandbox.domain(OPENCODE_PORT)
   }
 
   private buildCredentialsEnv(): string {

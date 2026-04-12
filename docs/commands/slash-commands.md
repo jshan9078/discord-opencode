@@ -58,6 +58,7 @@ Shows:
 - Provider ID (e.g., "openai", "anthropic")
 - Available auth methods (OAuth, API key, none)
 - Whether credentials are configured
+- Paged results with `Prev` / `Next` buttons
 
 ### /health-check
 
@@ -100,9 +101,10 @@ List available models for a provider.
 ```
 
 **Options:**
-- `provider` (optional): Filter by provider
+- `provider` (optional): Filter by provider, with autocomplete suggestions
 
 Shows model IDs and whether they're currently active.
+- Large model lists are paged with `Prev` / `Next` buttons
 
 ### /use-provider
 
@@ -114,7 +116,7 @@ Set the active provider for the channel.
 ```
 
 **Options:**
-- `provider` (required): Provider ID
+- `provider` (required): Provider ID, with autocomplete suggestions
 
 Sets the provider for subsequent `/ask` commands. Creates a new session.
 
@@ -128,7 +130,7 @@ Set the active model for the channel.
 ```
 
 **Options:**
-- `model` (required): Model ID (format: `provider/model`)
+- `model` (required): Model ID (format: `provider/model`), with autocomplete suggestions
 
 Sets the model for subsequent `/ask` commands. Creates a new session.
 

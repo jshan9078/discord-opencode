@@ -7,6 +7,7 @@ export interface DiscordApplicationCommandOption {
   name: string
   description: string
   required?: boolean
+  autocomplete?: boolean
   options?: DiscordApplicationCommandOption[]
 }
 
@@ -57,6 +58,7 @@ export function buildApplicationCommands(): DiscordApplicationCommand[] {
           name: "provider",
           description: "Optional provider id",
           required: false,
+          autocomplete: true,
         },
       ],
     },
@@ -70,6 +72,7 @@ export function buildApplicationCommands(): DiscordApplicationCommand[] {
           name: "provider",
           description: "Provider id",
           required: true,
+          autocomplete: true,
         },
       ],
     },
@@ -83,6 +86,7 @@ export function buildApplicationCommands(): DiscordApplicationCommand[] {
           name: "model",
           description: "Model id",
           required: true,
+          autocomplete: true,
         },
       ],
     },

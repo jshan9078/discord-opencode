@@ -35,9 +35,20 @@ type Interaction = {
     custom_id?: string
     name: string
     values?: string[]
-    options?: Array<{ name: string; type: number; value?: string | number | boolean }>
+    options?: Array<{
+      name: string
+      type: number
+      value?: string | number | boolean
+      focused?: boolean
+      options?: Array<{ name: string; type: number; value?: string | number | boolean; focused?: boolean }>
+    }>
   }
 }
+
+const DISCORD_MESSAGE_LIMIT = 1800
+const DISCORD_AUTOCOMPLETE_LIMIT = 25
+const PROVIDERS_PER_PAGE = 12
+const MODELS_PER_PAGE = 20
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -117,6 +128,210 @@ async function sendFollowup(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   })
+}
+
+function splitDiscordMessage(content: string, limit = DISCORD_MESSAGE_LIMIT): string[] {
+  if (content.length <= limit) {
+    return [content]
+  }
+
+  const chunks: string[] = []
+  let remaining = content
+
+  while (remaining.length > limit) {
+    let splitAt = remaining.lastIndexOf("\n", limit)
+    if (splitAt <= 0) {
+      splitAt = limit
+    }
+    chunks.push(remaining.slice(0, splitAt))
+    remaining = remaining.slice(splitAt).replace(/^\n+/, "")
+  }
+
+  if (remaining) {
+    chunks.push(remaining)
+  }
+
+  return chunks
+}
+
+async function sendChunkedInteractionResponse(interaction: Interaction, res: { statusCode: number; setHeader(name: string, value: string): void; end(body?: string): void }, content: string): Promise<void> {
+  const chunks = splitDiscordMessage(content)
+  await sendNodeResponse(res, json({ type: 4, data: { content: chunks[0] || "Done." } }))
+
+  if (chunks.length > 1) {
+    waitUntil((async () => {
+      for (const chunk of chunks.slice(1)) {
+        await sendFollowup(interaction.application_id, interaction.token, chunk)
+      }
+    })())
+  }
+}
+
+function getCommandOption(
+  options: Interaction["data"]["options"] | undefined,
+  name: string,
+): { name: string; type: number; value?: string | number | boolean; focused?: boolean; options?: Array<{ name: string; type: number; value?: string | number | boolean; focused?: boolean }> } | undefined {
+  return options?.find((option) => option.name === name)
+}
+
+function getFocusedOption(data: Interaction["data"]): { name: string; value: string } | undefined {
+  for (const option of data.options || []) {
+    if (option.focused) {
+      return { name: option.name, value: String(option.value || "") }
+    }
+    for (const nested of option.options || []) {
+      if (nested.focused) {
+        return { name: nested.name, value: String(nested.value || "") }
+      }
+    }
+  }
+  return undefined
+}
+
+function autocompleteChoices(values: Array<{ name: string; value: string }>): Response {
+  return json({ type: 8, data: { choices: values.slice(0, DISCORD_AUTOCOMPLETE_LIMIT) } })
+}
+
+function encodePageId(kind: "providers" | "models", page: number, providerId?: string): string {
+  if (kind === "models" && providerId) {
+    return `page:${kind}:${providerId}:${page}`
+  }
+  return `page:${kind}:${page}`
+}
+
+function decodePageId(customId: string): { kind: "providers" | "models"; page: number; providerId?: string } | null {
+  const parts = customId.split(":")
+  if (parts[0] !== "page") {
+    return null
+  }
+  if (parts[1] === "providers" && parts.length === 3) {
+    return { kind: "providers", page: Number(parts[2] || 0) }
+  }
+  if (parts[1] === "models" && parts.length === 4) {
+    return { kind: "models", providerId: parts[2], page: Number(parts[3] || 0) }
+  }
+  return null
+}
+
+function buildPaginationComponents(kind: "providers" | "models", page: number, totalPages: number, providerId?: string): unknown[] | undefined {
+  if (totalPages <= 1) {
+    return undefined
+  }
+
+  return [
+    {
+      type: 1,
+      components: [
+        {
+          type: 2,
+          custom_id: encodePageId(kind, page - 1, providerId),
+          label: "Prev",
+          style: 2,
+          disabled: page <= 0,
+        },
+        {
+          type: 2,
+          custom_id: encodePageId(kind, page + 1, providerId),
+          label: "Next",
+          style: 2,
+          disabled: page >= totalPages - 1,
+        },
+      ],
+    },
+  ]
+}
+
+function renderProvidersPage(
+  registry: { toStatusView(configuredProviders: string[]): Array<{ id: string; methods: Array<{ label: string }>; isConfigured: boolean }> },
+  configuredProviders: string[],
+  page: number,
+): { content: string; components?: unknown[] } {
+  const providers = registry.toStatusView(configuredProviders)
+  if (providers.length === 0) {
+    return { content: "No providers available yet." }
+  }
+
+  const totalPages = Math.max(1, Math.ceil(providers.length / PROVIDERS_PER_PAGE))
+  const safePage = Math.min(Math.max(page, 0), totalPages - 1)
+  const start = safePage * PROVIDERS_PER_PAGE
+  const items = providers.slice(start, start + PROVIDERS_PER_PAGE)
+  const lines = items.map((provider) => {
+    const methods = provider.methods.map((method) => method.label).join(", ") || "none"
+    const status = provider.isConfigured ? "configured" : "not configured"
+    return `- ${provider.id} (${status}) [${methods}]`
+  })
+
+  return {
+    content: [`Available providers (${safePage + 1}/${totalPages}):`, ...lines].join("\n"),
+    components: buildPaginationComponents("providers", safePage, totalPages),
+  }
+}
+
+function renderModelsPage(
+  registry: { getModels(providerId: string): Array<{ id: string; label?: string }> },
+  providerId: string,
+  page: number,
+): { content: string; components?: unknown[] } {
+  const models = registry.getModels(providerId)
+  if (models.length === 0) {
+    return { content: `No models found for provider '${providerId}'.` }
+  }
+
+  const totalPages = Math.max(1, Math.ceil(models.length / MODELS_PER_PAGE))
+  const safePage = Math.min(Math.max(page, 0), totalPages - 1)
+  const start = safePage * MODELS_PER_PAGE
+  const items = models.slice(start, start + MODELS_PER_PAGE)
+  const lines = items.map((model) => `- ${model.id}${model.label ? ` (${model.label})` : ""}`)
+
+  return {
+    content: [`Models for ${providerId} (${safePage + 1}/${totalPages}):`, ...lines].join("\n"),
+    components: buildPaginationComponents("models", safePage, totalPages, providerId),
+  }
+}
+
+async function handleAutocompleteInteraction(interaction: Interaction): Promise<Response> {
+  const [{ loadProviderRegistry }, { ChannelStateStore }] = await Promise.all([
+    import("../../src/provider-registry-store.js"),
+    import("../../src/channel-state-store.js"),
+  ])
+
+  const registry = await loadProviderRegistry()
+  const focused = getFocusedOption(interaction.data)
+  if (!focused) {
+    return autocompleteChoices([])
+  }
+
+  const query = focused.value.toLowerCase()
+  const startsWith = (value: string): boolean => value.toLowerCase().includes(query)
+
+  if (focused.name === "provider") {
+    const choices = registry.listProviders()
+      .filter((provider) => !query || startsWith(provider.id))
+      .slice(0, DISCORD_AUTOCOMPLETE_LIMIT)
+      .map((provider) => ({ name: provider.id, value: provider.id }))
+    return autocompleteChoices(choices)
+  }
+
+  if (focused.name === "model") {
+    const stateStore = new ChannelStateStore()
+    const state = stateStore.get(interaction.channel_id || "dm")
+    const providerOption = getCommandOption(interaction.data.options, "provider")
+    const providerId = typeof providerOption?.value === "string" ? providerOption.value : state.activeProviderId
+    if (!providerId) {
+      return autocompleteChoices([])
+    }
+
+    const choices = registry.getModels(providerId)
+      .filter((model) => !query || startsWith(model.id) || startsWith(model.label || ""))
+      .slice(0, DISCORD_AUTOCOMPLETE_LIMIT)
+      .map((model) => ({
+        name: (model.label ? `${model.id} (${model.label})` : model.id).slice(0, 100),
+        value: model.id,
+      }))
+    return autocompleteChoices(choices)
+  }
+
+  return autocompleteChoices([])
 }
 
 async function sendInitialResponse(
@@ -225,6 +440,38 @@ async function handleToolButtonInteraction(interaction: Interaction): Promise<Re
       content: `\`\`\`json\n${fullJson.slice(0, 1700)}\n\`\`\``,
     },
   })
+}
+
+async function handlePageButtonInteraction(interaction: Interaction): Promise<Response> {
+  const [{ loadProviderRegistry }, { CredentialStore }] = await Promise.all([
+    import("../../src/provider-registry-store.js"),
+    import("../../src/credential-store.js"),
+  ])
+
+  const customId = interaction.data?.custom_id
+  if (!customId) {
+    return json({ type: 4, data: { content: "Missing page data." } })
+  }
+
+  const pageData = decodePageId(customId)
+  if (!pageData) {
+    return json({ type: 4, data: { content: "Invalid page data." } })
+  }
+
+  const registry = await loadProviderRegistry()
+
+  if (pageData.kind === "providers") {
+    const credentials = new CredentialStore()
+    const page = renderProvidersPage(registry, credentials.listProviders(), pageData.page)
+    return json({ type: 7, data: { content: page.content, components: page.components } })
+  }
+
+  if (!pageData.providerId) {
+    return json({ type: 4, data: { content: "Missing provider for models page." } })
+  }
+
+  const page = renderModelsPage(registry, pageData.providerId, pageData.page)
+  return json({ type: 7, data: { content: page.content, components: page.components } })
 }
 
 async function handleProjectSelectMenu(interaction: Interaction): Promise<Response> {
@@ -699,6 +946,10 @@ export default async function handler(
         await sendNodeResponse(res, await handleToolButtonInteraction(interaction))
         return
       }
+      if (interaction.data?.custom_id?.startsWith("page:")) {
+        await sendNodeResponse(res, await handlePageButtonInteraction(interaction))
+        return
+      }
       if (interaction.data?.custom_id?.startsWith("project:")) {
         await sendNodeResponse(res, await handleProjectSelectMenu(interaction))
         return
@@ -707,13 +958,19 @@ export default async function handler(
       return
     }
 
+    if (interaction.type === 4) {
+      await sendNodeResponse(res, await handleAutocompleteInteraction(interaction))
+      return
+    }
+
     if (interaction.type !== 2 || !interaction.data) {
       await sendNodeResponse(res, json({ type: 4, data: { content: "Unsupported interaction type." } }))
       return
     }
 
-    const [{ mapInteractionCommandToText }, { ChannelStateStore }, { CredentialStore }, { handleDiscordCommand }] = await Promise.all([
+    const [{ mapInteractionCommandToText }, { parseDiscordCommand }, { ChannelStateStore }, { CredentialStore }, { handleDiscordCommand }] = await Promise.all([
       import("../../src/interaction-command-mapper.js"),
+      import("../../src/command-parser.js"),
       import("../../src/channel-state-store.js"),
       import("../../src/credential-store.js"),
       import("../../src/discord-command-service.js"),
@@ -741,18 +998,13 @@ export default async function handler(
       const { refreshProviderRegistry } = await import("../../src/provider-registry-store.js")
 
       const result = await refreshProviderRegistry()
-      await sendNodeResponse(
+      await sendChunkedInteractionResponse(
+        interaction,
         res,
-        json({
-          type: 4,
-          data: {
-            content:
-              `${result.created ? "Created" : "Updated"} provider registry.\n` +
-              `Providers: ${result.providerCount}\n` +
-              `Models: ${result.modelCount}\n` +
-              `Registry gist: ${result.gistUrl}`,
-          },
-        }),
+        `${result.created ? "Created" : "Updated"} provider registry.\n` +
+          `Providers: ${result.providerCount}\n` +
+          `Models: ${result.modelCount}\n` +
+          `Registry gist: ${result.gistUrl}`,
       )
       return
     }
@@ -761,6 +1013,26 @@ export default async function handler(
     const registry = await loadProviderRegistry()
     const stateStore = new ChannelStateStore()
     const credentials = new CredentialStore()
+    const parsed = parseDiscordCommand(mapped.text)
+
+    if (parsed.type === "providers") {
+      const page = renderProvidersPage(registry, credentials.listProviders(), 0)
+      await sendNodeResponse(res, json({ type: 4, data: { content: page.content, components: page.components } }))
+      return
+    }
+
+    if (parsed.type === "models") {
+      const state = stateStore.get(interaction.channel_id || "dm")
+      const providerId = parsed.providerId || state.activeProviderId
+      if (!providerId) {
+        await sendChunkedInteractionResponse(interaction, res, "No active provider. Run: /models <provider> or /use-provider <provider>")
+        return
+      }
+
+      const page = renderModelsPage(registry, providerId, 0)
+      await sendNodeResponse(res, json({ type: 4, data: { content: page.content, components: page.components } }))
+      return
+    }
 
     const commandResult = handleDiscordCommand(
       mapped.text,
@@ -770,7 +1042,7 @@ export default async function handler(
       credentials,
     )
 
-    await sendNodeResponse(res, json({ type: 4, data: { content: commandResult.message || "Done." } }))
+    await sendChunkedInteractionResponse(interaction, res, commandResult.message || "Done.")
   } catch (error) {
     console.error("Discord interaction handler failed:", error)
     await sendNodeResponse(

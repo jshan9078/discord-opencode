@@ -151,9 +151,9 @@ ANTHROPIC_API_KEY=sk-ant-... # Anthropic
 | `/health-check` | Fast bridge health check |
 | `/update` | Refresh provider registry snapshot |
 | `/providers` | List available providers |
-| `/models` | List available models |
-| `/use-provider <id>` | Switch provider |
-| `/use-model <id>` | Switch model |
+| `/models [provider]` | List available models (provider autocomplete) |
+| `/use-provider <id>` | Switch provider (autocomplete) |
+| `/use-model <id>` | Switch model (autocomplete) |
 | `/auth-connect <provider>` | OAuth flow for providers (e.g., chatgpt) |
 
 ## Pricing

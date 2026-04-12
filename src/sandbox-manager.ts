@@ -395,14 +395,40 @@ export class SandboxManager {
       return { success: false, message: `OAuth start failed: ${response.status}${details ? ` ${details}` : ""}` }
     }
 
-    const data = (await response.json()) as { data?: { url?: string; user_code?: string; instructions?: string; device_auth_id?: string } }
+    const data = (await response.json()) as {
+      data?: {
+        url?: string
+        verification_uri?: string
+        verification_url?: string
+        verificationUri?: string
+        user_code?: string
+        userCode?: string
+        instructions?: string
+        device_auth_id?: string
+        deviceAuthId?: string
+      }
+    }
     const result = data.data || {}
+    const urlValue =
+      result.url
+      || result.verification_uri
+      || result.verification_url
+      || result.verificationUri
+    const userCodeValue = result.user_code || result.userCode
+    const deviceAuthIdValue = result.device_auth_id || result.deviceAuthId
+
+    if (!urlValue) {
+      return {
+        success: false,
+        message: `OAuth start returned no URL for provider '${providerId}'. Response: ${JSON.stringify(result)}`,
+      }
+    }
 
     return {
-      url: result.url,
-      userCode: result.user_code,
+      url: urlValue,
+      userCode: userCodeValue,
       instructions: result.instructions,
-      deviceAuthId: result.device_auth_id,
+      deviceAuthId: deviceAuthIdValue,
     }
   }
 

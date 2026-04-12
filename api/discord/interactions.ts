@@ -132,11 +132,27 @@ async function sendFollowup(
   if (threadId) {
     body.thread_id = threadId
   }
-  await fetch(`https://discord.com/api/v10/webhooks/${applicationId}/${token}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  })
+
+  const send = async (payload: Record<string, unknown>): Promise<Response> => fetch(
+    `https://discord.com/api/v10/webhooks/${applicationId}/${token}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  )
+
+  let response = await send(body)
+
+  if (!response.ok && threadId) {
+    const fallbackBody: Record<string, unknown> = { content, components, embeds }
+    response = await send(fallbackBody)
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "")
+    throw new Error(`Discord followup failed: ${response.status} ${errorText}`)
+  }
 }
 
 function splitDiscordMessage(content: string, limit = DISCORD_MESSAGE_LIMIT): string[] {
@@ -798,7 +814,8 @@ async function handleProjectCommand(interaction: Interaction): Promise<Response>
 }
 
 async function processAskInteraction(interaction: Interaction, prompt: string): Promise<void> {
-  const [
+  try {
+    const [
     { ChannelStateStore },
     { CredentialStore },
     { OpencodeRuntime },
@@ -807,39 +824,39 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
     { getRecoveryContext },
     { loadProviderRegistry },
     { SelectionStore },
-  ] = await Promise.all([
-    import("../../src/channel-state-store.js"),
-    import("../../src/credential-store.js"),
-    import("../../src/opencode-runtime.js"),
-    import("../../src/prompt-orchestrator.js"),
-    import("../../src/sandbox-manager.js"),
-    import("../../src/discord-message-fetcher.js"),
-    import("../../src/provider-registry-store.js"),
-    import("../../src/selection-store.js"),
-  ])
+    ] = await Promise.all([
+      import("../../src/channel-state-store.js"),
+      import("../../src/credential-store.js"),
+      import("../../src/opencode-runtime.js"),
+      import("../../src/prompt-orchestrator.js"),
+      import("../../src/sandbox-manager.js"),
+      import("../../src/discord-message-fetcher.js"),
+      import("../../src/provider-registry-store.js"),
+      import("../../src/selection-store.js"),
+    ])
 
-  const channelId = interaction.channel_id
-  const messageId = interaction.message?.id
-  const userId = getInteractionUserId(interaction)
+    const channelId = interaction.channel_id
+    const messageId = interaction.message?.id
+    const userId = getInteractionUserId(interaction)
 
-  if (!channelId || !userId) {
-    await sendFollowup(
-      interaction.application_id,
-      interaction.token,
-      !channelId ? "Missing channel ID." : "Missing user ID.",
-    )
-    return
-  }
+    if (!channelId || !userId) {
+      await sendFollowup(
+        interaction.application_id,
+        interaction.token,
+        !channelId ? "Missing channel ID." : "Missing user ID.",
+      )
+      return
+    }
 
-  const stateStore = new ChannelStateStore()
-  const selectionStore = new SelectionStore()
-  const channelState = stateStore.get(channelId)
-  const commandIsInThread = await isThreadChannel(channelId)
+    const stateStore = new ChannelStateStore()
+    const selectionStore = new SelectionStore()
+    const channelState = stateStore.get(channelId)
+    const commandIsInThread = await isThreadChannel(channelId)
 
   // Create or reuse thread for this conversation
-  let threadId = commandIsInThread ? channelId : channelState.threadId
+    let threadId = commandIsInThread ? channelId : channelState.threadId
 
-  if (!threadId && messageId) {
+    if (!threadId && messageId) {
     // Create a new thread from the command message
     const threadName = `OpenCode: ${prompt.slice(0, 50)}${prompt.length > 50 ? "..." : ""}`
     const threadResponse = await fetch(
@@ -873,12 +890,12 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
   }
 
   // If no thread and no message ID, we'll use channel-level followups
-  const effectiveThreadId = threadId || undefined
-  const conversationId = effectiveThreadId || channelId
-  const conversationState = stateStore.get(conversationId)
+    const effectiveThreadId = threadId || undefined
+    const conversationId = effectiveThreadId || channelId
+    const conversationState = stateStore.get(conversationId)
 
-  const selection = await selectionStore.resolveSelection(userId, effectiveThreadId)
-  if (!selection?.providerId) {
+    const selection = await selectionStore.resolveSelection(userId, effectiveThreadId)
+    if (!selection?.providerId) {
     await sendFollowup(
       interaction.application_id,
       interaction.token,
@@ -889,7 +906,7 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
     return
   }
 
-  if (!selection?.modelId) {
+    if (!selection?.modelId) {
     await sendFollowup(
       interaction.application_id,
       interaction.token,
@@ -900,42 +917,42 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
     return
   }
 
-  let repoUrl: string | undefined
-  let branch = "main"
-  if (conversationState.repoUrl || channelState.repoUrl) {
-    repoUrl = conversationState.repoUrl || channelState.repoUrl
-    branch = conversationState.branch || channelState.branch || "main"
-  }
+    let repoUrl: string | undefined
+    let branch = "main"
+    if (conversationState.repoUrl || channelState.repoUrl) {
+      repoUrl = conversationState.repoUrl || channelState.repoUrl
+      branch = conversationState.branch || channelState.branch || "main"
+    }
 
-  const sandboxManager = getSandboxManager()
-  let sandboxContext: SandboxContext
-  const oldSandboxId = conversationState.sandboxId
+    const sandboxManager = getSandboxManager()
+    let sandboxContext: SandboxContext
+    const oldSandboxId = conversationState.sandboxId
 
-  try {
-    sandboxContext = await sandboxManager.getOrCreate(conversationId, conversationState.sandboxId, repoUrl, branch)
-  } catch (error) {
-    console.error("Failed to get/create sandbox:", error)
-    await sendFollowup(
-      interaction.application_id,
-      interaction.token,
-      `Failed to create sandbox: ${error instanceof Error ? error.message : "Unknown error"}`,
-    )
-    return
-  }
+    try {
+      sandboxContext = await sandboxManager.getOrCreate(conversationId, conversationState.sandboxId, repoUrl, branch)
+    } catch (error) {
+      console.error("Failed to get/create sandbox:", error)
+      await sendFollowup(
+        interaction.application_id,
+        interaction.token,
+        `Failed to create sandbox: ${error instanceof Error ? error.message : "Unknown error"}`,
+      )
+      return
+    }
 
   // Update state with sandbox ID for future resumption
-  conversationState.sandboxId = sandboxContext.sandboxId
-  stateStore.set(conversationState)
+    conversationState.sandboxId = sandboxContext.sandboxId
+    stateStore.set(conversationState)
 
-  const runtime = new OpencodeRuntime(sandboxContext.opencodeBaseUrl, sandboxContext.opencodePassword)
-  const credentials = new CredentialStore()
-  const registry = await loadProviderRegistry()
+    const runtime = new OpencodeRuntime(sandboxContext.opencodeBaseUrl, sandboxContext.opencodePassword)
+    const credentials = new CredentialStore()
+    const registry = await loadProviderRegistry()
 
   // Check if sandbox was newly created (old one expired) - fetch recovery context
-  const isNewSandbox = oldSandboxId && oldSandboxId !== sandboxContext.sandboxId
+    const isNewSandbox = oldSandboxId && oldSandboxId !== sandboxContext.sandboxId
 
   // Warn user about lost local changes if sandbox expired
-  if (isNewSandbox && repoUrl) {
+    if (isNewSandbox && repoUrl) {
     await sendFollowup(
       interaction.application_id,
       interaction.token,
@@ -945,15 +962,15 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
     )
   }
 
-  const recoveryContext = isNewSandbox
-    ? await getRecoveryContext(stateStore, conversationId, prompt)
-    : undefined
+    const recoveryContext = isNewSandbox
+      ? await getRecoveryContext(stateStore, conversationId, prompt)
+      : undefined
 
-  let responseBuffer = ""
-  let toolEvents = 0
-  const threadIdForFollowups = effectiveThreadId
+    let responseBuffer = ""
+    let toolEvents = 0
+    const threadIdForFollowups = effectiveThreadId
 
-  const result = await executePromptForChannel(
+    const result = await executePromptForChannel(
     runtime,
     registry,
     credentials,
@@ -1009,29 +1026,38 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
     },
   )
 
-  if (!result.ok) {
-    await sendFollowup(interaction.application_id, interaction.token, result.message, undefined, threadIdForFollowups)
-    return
-  }
+    if (!result.ok) {
+      await sendFollowup(interaction.application_id, interaction.token, result.message, undefined, threadIdForFollowups)
+      return
+    }
 
-  const usageFooter = formatUsageFooter(
-    result.hadError ? result.usage : result.usage,
-    registry.getModel(selection.providerId, selection.modelId)?.contextWindow,
-  )
+    const usageFooter = formatUsageFooter(
+      result.hadError ? result.usage : result.usage,
+      registry.getModel(selection.providerId, selection.modelId)?.contextWindow,
+    )
 
-  const text = responseBuffer.trim()
-  if (result.hadError) {
+    const text = responseBuffer.trim()
+    if (result.hadError) {
     const helpMsg = "\n\nTo switch models, use `/use-provider` and `/use-model`"
     if (text) {
       await sendFinalAskResponse(interaction, threadIdForFollowups, text + helpMsg, usageFooter)
     } else {
       await sendFinalAskResponse(interaction, threadIdForFollowups, `Error occurred.${helpMsg}`, usageFooter)
     }
-  } else if (text) {
-    await sendFinalAskResponse(interaction, threadIdForFollowups, text, usageFooter)
-  } else {
-    const suffix = toolEvents > 0 ? ` (${toolEvents} tool${toolEvents > 1 ? "s" : ""})` : ""
-    await sendFinalAskResponse(interaction, threadIdForFollowups, `Done${suffix}.`, usageFooter)
+    } else if (text) {
+      await sendFinalAskResponse(interaction, threadIdForFollowups, text, usageFooter)
+    } else {
+      const suffix = toolEvents > 0 ? ` (${toolEvents} tool${toolEvents > 1 ? "s" : ""})` : ""
+      await sendFinalAskResponse(interaction, threadIdForFollowups, `Done${suffix}.`, usageFooter)
+    }
+  } catch (error) {
+    console.error("processAskInteraction failed:", error)
+    const message = error instanceof Error ? error.message : "Unknown error"
+    try {
+      await sendFollowup(interaction.application_id, interaction.token, `Request failed: ${message}`)
+    } catch (followupError) {
+      console.error("Failed to send fallback followup:", followupError)
+    }
   }
 }
 

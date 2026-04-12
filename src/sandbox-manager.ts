@@ -260,24 +260,55 @@ export class SandboxManager {
       await new Promise((resolve) => setTimeout(resolve, 1000))
     }
 
-    const logResult = await sandbox.runCommand({
+    console.error(`[SandboxManager] Sandbox ID: ${sandbox.sandboxId}`)
+
+    const bashCheck = await sandbox.runCommand({
       cmd: "bash",
-      args: ["-c", "cat /tmp/opencode.log 2>/dev/null || echo '(log missing)'"],
+      args: ["-c", "echo 'bash works'; echo PATH=$PATH"],
     }).catch(() => null)
-    const logText = logResult?.stdout || "(could not read log)"
-    console.error(`[SandboxManager] OpenCode startup log: ${logText}`)
+    console.error(`[SandboxManager] Bash & PATH: ${bashCheck?.stdout || "bash failed"}`)
+
+    const fileCheck = await sandbox.runCommand({
+      cmd: "bash",
+      args: ["-c", "ls -la ~/.local/bin/opencode 2>/dev/null || echo 'not in ~/.local/bin'; ls -la /usr/local/bin/opencode 2>/dev/null || echo 'not in /usr/local/bin'; which opencode 2>&1"],
+    }).catch(() => null)
+    console.error(`[SandboxManager] OpenCode locations: ${fileCheck?.stdout || "error"}`)
 
     const opencodeCheck = await sandbox.runCommand({
       cmd: "bash",
-      args: ["-c", "which opencode || echo 'opencode not found'"],
+      args: ["-c", "type opencode 2>&1 || echo 'not found'"],
     }).catch(() => null)
-    console.error(`[SandboxManager] OpenCode path check: ${opencodeCheck?.stdout || "error"}`)
+    console.error(`[SandboxManager] OpenCode type: ${opencodeCheck?.stdout || opencodeCheck?.stderr || "error"}`)
 
     const versionCheck = await sandbox.runCommand({
-      cmd: "opencode",
-      args: ["--version"],
+      cmd: "bash",
+      args: ["-c", "echo '---'; opencode --version 2>&1 || echo 'version failed'"],
     }).catch(() => null)
     console.error(`[SandboxManager] OpenCode version: ${versionCheck?.stdout || versionCheck?.stderr || "error"}`)
+
+    const directRun = await sandbox.runCommand({
+      cmd: "bash",
+      args: ["-c", "echo '---RUNNING DIRECTLY---'; /root/.local/bin/opencode --version 2>&1 || echo 'direct failed'"],
+    }).catch(() => null)
+    console.error(`[SandboxManager] Direct opencode: ${directRun?.stdout || directRun?.stderr || "error"}`)
+
+    const envCheck = await sandbox.runCommand({
+      cmd: "bash",
+      args: ["-c", "echo '---ENV---'; env | grep -i opencode || echo 'no opencode env'"],
+    }).catch(() => null)
+    console.error(`[SandboxManager] OpenCode env vars: ${envCheck?.stdout || envCheck?.stderr || "error"}`)
+
+    const shimsCheck = await sandbox.runCommand({
+      cmd: "bash",
+      args: ["-c", "ls -la ~/.bun/install/ 2>/dev/null || echo 'no bun install'; ls -la ~/.local/share/opencode/bin/ 2>/dev/null || echo 'no opencode bin'"],
+    }).catch(() => null)
+    console.error(`[SandboxManager] Install locations: ${shimsCheck?.stdout || shimsCheck?.stderr || "error"}`)
+
+    const testServe = await sandbox.runCommand({
+      cmd: "bash",
+      args: ["-c", "OPENCODE_SERVER_PASSWORD=test opencode serve --help 2>&1 || echo 'serve failed'"],
+    }).catch(() => null)
+    console.error(`[SandboxManager] OpenCode serve test: ${testServe?.stdout || testServe?.stderr || "error"}`)
 
     throw new Error("OpenCode server failed to start")
   }

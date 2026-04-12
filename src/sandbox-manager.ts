@@ -260,6 +260,12 @@ export class SandboxManager {
       await new Promise((resolve) => setTimeout(resolve, 1000))
     }
 
+    const logResult = await sandbox.runCommand({
+      cmd: "cat",
+      args: ["/tmp/opencode.log"],
+    }).catch(() => ({ stdout: "", stderr: "Could not read log" }))
+    console.error(`[SandboxManager] OpenCode startup log: ${logResult.stdout || logResult.stderr}`)
+
     throw new Error("OpenCode server failed to start")
   }
 

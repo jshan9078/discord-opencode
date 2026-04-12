@@ -142,7 +142,7 @@ export class SandboxManager {
       cmd: "bash",
       args: [
         "-lc",
-        `${envPrefix} OPENCODE_SERVER_PASSWORD=${password} nohup opencode serve --hostname 0.0.0.0 --port ${port} >/tmp/opencode.log 2>&1 &`,
+        `${envPrefix} PATH="$HOME/.local/bin:$PATH" OPENCODE_SERVER_PASSWORD=${password} nohup /root/.local/bin/opencode serve --hostname 0.0.0.0 --port ${port} >/tmp/opencode.log 2>&1 &`,
       ],
     })
 
@@ -178,10 +178,28 @@ export class SandboxManager {
     }
 
     console.log(`[SandboxManager] Installing OpenCode`)
+    const installResult = await sandbox.runCommand({
+      cmd: "bash",
+      args: ["-lc", "curl -LsSf https://opencode.ai/install.sh 2>&1 | head -20"],
+    }).catch(() => null)
+    console.error(`[SandboxManager] Install script preview: ${installResult ? await installResult.stdout() : "curl failed"}`)
+
     await sandbox.runCommand({
       cmd: "bash",
-      args: ["-lc", "curl -LsSf https://opencode.ai/install.sh | sh"],
+      args: ["-lc", "curl -LsSf https://opencode.ai/install.sh 2>&1 | sh"],
     })
+
+    // Ensure executable permission
+    await sandbox.runCommand({
+      cmd: "bash",
+      args: ["-lc", "chmod +x ~/.local/bin/opencode 2>/dev/null || true"],
+    })
+
+    const afterInstall = await sandbox.runCommand({
+      cmd: "bash",
+      args: ["-c", "ls -la ~/.local/bin/ 2>/dev/null || echo 'no .local/bin'; echo '---'; echo PATH=$PATH"],
+    }).catch(() => null)
+    console.error(`[SandboxManager] After install: ${afterInstall ? await afterInstall.stdout() : "error"}`)
   }
 
   private async injectUserConfig(sandbox: Sandbox): Promise<void> {

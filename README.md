@@ -63,6 +63,7 @@ In Vercel dashboard, set:
 
 **User config** (optional - your personal OpenCode settings):
 - `OPENCODE_GIST_URL` = URL of a private GitHub gist with your `opencode.jsonc`
+- To create: run `pnpm exec bun scripts/bundle-config.ts` (will prompt for GitHub token)
 
 No OpenCode URL needed - the bridge creates sandboxes and runs OpenCode automatically.
 

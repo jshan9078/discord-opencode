@@ -161,11 +161,20 @@ export class OpencodeRuntime {
   }
 
   async createSession(title: string): Promise<string> {
-    const response = await this.request<{ data: { id: string } }>("/session", {
+    const response = await this.request<{
+      data?: { id?: string }
+      id?: string
+      sessionID?: string
+    }>("/session", {
       method: "POST",
       body: { title },
     })
-    return response.data.id
+
+    const id = response.data?.id || response.id || response.sessionID
+    if (!id) {
+      throw new Error(`Session create returned no id: ${JSON.stringify(response)}`)
+    }
+    return id
   }
 
   async promptAsync(

@@ -157,6 +157,7 @@ export class SandboxManager {
 
     // Install OpenCode if needed
     await this.ensureOpenCodeInstalled(sandbox)
+    await this.ensureGitHubCliInstalled(sandbox)
     const opencodePath = await this.resolveOpenCodePath(sandbox)
 
     // Fetch and inject user config (Blob preferred, gist fallback)
@@ -264,6 +265,56 @@ export class SandboxManager {
       throw new Error("OpenCode executable path could not be resolved")
     }
     return path
+  }
+
+  private async ensureGitHubCliInstalled(sandbox: Sandbox): Promise<void> {
+    const checkResult = await sandbox.runCommand({
+      cmd: "bash",
+      args: ["-lc", "command -v gh >/dev/null 2>&1"],
+    }).catch(() => ({ exitCode: 1 }))
+
+    if (checkResult.exitCode === 0) {
+      return
+    }
+
+    console.log("[SandboxManager] Installing GitHub CLI (gh)")
+    await sandbox.runCommand({
+      cmd: "bash",
+      args: [
+        "-lc",
+        [
+          "set -e",
+          "if command -v apt-get >/dev/null 2>&1; then",
+          "  apt-get update >/dev/null 2>&1 || true",
+          "  apt-get install -y gh >/dev/null 2>&1 || true",
+          "fi",
+          "if ! command -v gh >/dev/null 2>&1; then",
+          "  mkdir -p \"$HOME/.local/bin\"",
+          "  arch=$(uname -m)",
+          "  case \"$arch\" in",
+          "    x86_64|amd64) gh_arch=amd64 ;;",
+          "    aarch64|arm64) gh_arch=arm64 ;;",
+          "    *) gh_arch=amd64 ;;",
+          "  esac",
+          "  version=${GH_VERSION:-2.72.0}",
+          "  tmp=\"/tmp/gh_${version}_linux_${gh_arch}.tar.gz\"",
+          "  curl -fsSL \"https://github.com/cli/cli/releases/download/v${version}/gh_${version}_linux_${gh_arch}.tar.gz\" -o \"$tmp\"",
+          "  tar -xzf \"$tmp\" -C /tmp",
+          "  cp \"/tmp/gh_${version}_linux_${gh_arch}/bin/gh\" \"$HOME/.local/bin/gh\"",
+          "  chmod +x \"$HOME/.local/bin/gh\"",
+          "fi",
+        ].join("; "),
+      ],
+    })
+
+    const verifyResult = await sandbox.runCommand({
+      cmd: "bash",
+      args: ["-lc", "command -v gh >/dev/null 2>&1 || [ -x \"$HOME/.local/bin/gh\" ]"],
+    }).catch(() => ({ exitCode: 1 }))
+
+    if (verifyResult.exitCode !== 0) {
+      throw new Error("GitHub CLI installation completed but executable not found")
+    }
   }
 
   private async injectUserConfig(sandbox: Sandbox): Promise<void> {

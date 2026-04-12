@@ -101,13 +101,15 @@ export async function executePromptForChannel(
   if (authResult.type === "needs_local_oauth") {
     return {
       ok: false,
-      message: `Provider '${providerId}' needs local OAuth setup. Run: bridge auth connect ${providerId}`,
+      message:
+        `Provider '${providerId}' needs OAuth setup. ` +
+        `Run /auth-connect ${providerId} in Discord, complete the login flow, then run the same command again to finish callback.`,
     }
   }
   if (authResult.type === "needs_local_api_key") {
     return {
       ok: false,
-      message: `Provider '${providerId}' needs local API key setup. Run: bridge auth set-key ${providerId} --stdin`,
+      message: `Provider '${providerId}' needs an API key. Set ${providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY in Vercel project env vars.`,
     }
   }
 

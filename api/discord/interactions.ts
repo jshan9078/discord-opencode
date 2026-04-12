@@ -130,8 +130,44 @@ async function sendFollowup(
   threadId?: string,
   embeds?: unknown[],
 ): Promise<void> {
+  if (threadId && process.env.DISCORD_BOT_TOKEN) {
+    const threadResponse = await fetch(`https://discord.com/api/v10/channels/${threadId}/messages`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
+      },
+      body: JSON.stringify({ content, embeds, components }),
+    }).catch(() => null)
+
+    if (threadResponse?.ok) {
+      return
+    }
+
+    // If direct thread post fails, try webhook with explicit thread_id next.
+    const webhookThreadResponse = await fetch(
+      `https://discord.com/api/v10/webhooks/${applicationId}/${token}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, components, embeds, thread_id: threadId }),
+      },
+    ).catch(() => null)
+
+    if (webhookThreadResponse?.ok) {
+      return
+    }
+
+    const threadErrorText = threadResponse ? await threadResponse.text().catch(() => "") : "no response"
+    const webhookThreadErrorText = webhookThreadResponse ? await webhookThreadResponse.text().catch(() => "") : "no response"
+    throw new Error(
+      `Thread delivery failed: thread post ${threadResponse?.status || "n/a"} ${threadErrorText}; webhook thread post ${webhookThreadResponse?.status || "n/a"} ${webhookThreadErrorText}`,
+    )
+  }
+
+  const tokenHasThread = token.includes("/")
   const body: Record<string, unknown> = { content, components, embeds }
-  if (threadId) {
+  if (threadId && !tokenHasThread) {
     body.thread_id = threadId
   }
 
@@ -146,7 +182,7 @@ async function sendFollowup(
 
   let response = await send(body)
 
-  if (!response.ok && threadId) {
+  if (!response.ok && threadId && !tokenHasThread) {
     const fallbackBody: Record<string, unknown> = { content, components, embeds }
     response = await send(fallbackBody)
   }

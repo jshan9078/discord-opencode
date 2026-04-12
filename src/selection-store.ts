@@ -24,13 +24,23 @@ function threadPath(threadId: string): string {
 
 async function readJson(path: string): Promise<SelectionConfig | undefined> {
   requireBlobToken()
-  const result = await get(path, { access: "private" })
-  if (!result || result.statusCode !== 200 || !result.stream) {
+  try {
+    const result = await get(path, { access: "private" })
+    if (!result) {
+      return undefined
+    }
+
+    const hasStream = typeof result === "object" && "stream" in result
+    if (!hasStream) {
+      return undefined
+    }
+
+    const typedResult = result as { stream: ReadableStream<Uint8Array> }
+    const text = await new Response(typedResult.stream).text()
+    return JSON.parse(text) as SelectionConfig
+  } catch {
     return undefined
   }
-
-  const text = await new Response(result.stream).text()
-  return JSON.parse(text) as SelectionConfig
 }
 
 async function writeJson(path: string, value: SelectionConfig): Promise<void> {

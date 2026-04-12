@@ -91,9 +91,6 @@ See [Source Files](./components/source-files.md) for complete reference.
 | `BRIDGE_SECRET` | Yes | Credential encryption key |
 
 No external OpenCode server needed - the bridge creates Vercel Sandboxes and runs OpenCode inside them.
-| `GITHUB_TOKEN` | Yes | For repo/branch selection |
-| `OPENCODE_BASE_URL` | Yes | OpenCode server URL |
-| `OPENCODE_SERVER_PASSWORD` | Yes | OpenCode server password |
 
 ## Pricing
 

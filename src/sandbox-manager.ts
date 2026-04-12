@@ -278,15 +278,15 @@ export class SandboxManager {
     }
 
     console.log("[SandboxManager] Installing GitHub CLI (gh)")
-    await sandbox.runCommand({
+    const installResult = await sandbox.runCommand({
       cmd: "bash",
       args: [
         "-lc",
         [
           "set -e",
           "if command -v apt-get >/dev/null 2>&1; then",
-          "  apt-get update >/dev/null 2>&1 || true",
-          "  apt-get install -y gh >/dev/null 2>&1 || true",
+          "  apt-get update",
+          "  apt-get install -y gh",
           "fi",
           "if ! command -v gh >/dev/null 2>&1; then",
           "  mkdir -p \"$HOME/.local/bin\"",
@@ -305,7 +305,39 @@ export class SandboxManager {
           "fi",
         ].join("; "),
       ],
-    })
+    }).catch(() => null)
+
+    if (!installResult || installResult.exitCode !== 0) {
+      const diagnostics = await sandbox.runCommand({
+        cmd: "bash",
+        args: [
+          "-lc",
+          [
+            "echo '--- uname ---'",
+            "uname -a || true",
+            "echo '--- whoami ---'",
+            "whoami || true",
+            "echo '--- path ---'",
+            "echo $PATH",
+            "echo '--- gh lookup ---'",
+            "command -v gh || true",
+            "ls -la $HOME/.local/bin 2>/dev/null || true",
+            "echo '--- apt-get ---'",
+            "command -v apt-get || true",
+            "echo '--- tar/curl ---'",
+            "command -v tar || true",
+            "command -v curl || true",
+          ].join("; "),
+        ],
+      }).catch(() => null)
+
+      const installStdout = installResult ? await installResult.stdout().catch(() => "") : ""
+      const installStderr = installResult ? await installResult.stderr().catch(() => "") : ""
+      const diagnosticsText = diagnostics ? await diagnostics.stdout().catch(() => "") : ""
+      throw new Error(
+        `GitHub CLI install command failed. stdout=${installStdout} stderr=${installStderr} diagnostics=${diagnosticsText}`,
+      )
+    }
 
     const verifyResult = await sandbox.runCommand({
       cmd: "bash",
@@ -313,7 +345,12 @@ export class SandboxManager {
     }).catch(() => ({ exitCode: 1 }))
 
     if (verifyResult.exitCode !== 0) {
-      throw new Error("GitHub CLI installation completed but executable not found")
+      const diagnostics = await sandbox.runCommand({
+        cmd: "bash",
+        args: ["-lc", "echo PATH=$PATH; command -v gh || true; ls -la $HOME/.local/bin 2>/dev/null || true"],
+      }).catch(() => null)
+      const diagnosticsText = diagnostics ? await diagnostics.stdout().catch(() => "") : ""
+      throw new Error(`GitHub CLI installation completed but executable not found. diagnostics=${diagnosticsText}`)
     }
   }
 

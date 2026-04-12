@@ -163,6 +163,9 @@ export class SandboxManager {
     // Fetch and inject user config (Blob preferred, gist fallback)
     await this.injectUserConfig(sandbox)
 
+    // Configure non-interactive GitHub auth for git clone/fetch in tools
+    await this.ensureGitAskPassConfigured(sandbox)
+
     // Inject credentials from env vars into sandbox env
     const envPrefix = this.buildCredentialsEnv()
 
@@ -178,7 +181,7 @@ export class SandboxManager {
       cmd: "bash",
       args: [
         "-lc",
-        `${envPrefix} PATH="$HOME/.local/bin:$PATH" OPENCODE_SERVER_PASSWORD=${password} nohup ${opencodePath} serve --hostname 0.0.0.0 --port ${port} >/tmp/opencode.log 2>&1 &`,
+        `${envPrefix} PATH="$HOME/.local/bin:$PATH" GIT_ASKPASS=/tmp/git-askpass.sh GIT_TERMINAL_PROMPT=0 OPENCODE_SERVER_PASSWORD=${password} nohup ${opencodePath} serve --hostname 0.0.0.0 --port ${port} >/tmp/opencode.log 2>&1 &`,
       ],
     })
 
@@ -204,6 +207,20 @@ export class SandboxManager {
       }
     }
     return parts.join("")
+  }
+
+  private async ensureGitAskPassConfigured(sandbox: Sandbox): Promise<void> {
+    if (!process.env.GITHUB_TOKEN) {
+      return
+    }
+
+    await sandbox.runCommand({
+      cmd: "bash",
+      args: [
+        "-lc",
+        "printf '%s\\n' '#!/bin/sh' 'prompt=\"$1\"' 'case \"$prompt\" in' '*Username*) echo \"x-access-token\" ;;' '*Password*) echo \"$GITHUB_TOKEN\" ;;' '*) echo \"\" ;;' 'esac' > /tmp/git-askpass.sh && chmod 700 /tmp/git-askpass.sh",
+      ],
+    })
   }
 
   private async ensureOpenCodeInstalled(sandbox: Sandbox): Promise<void> {

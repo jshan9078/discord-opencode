@@ -4,10 +4,9 @@ A serverless Discord↔OpenCode bridge using Vercel Sandbox. Send coding request
 
 ## Quick Links
 
-- [Setup Guide](../../SETUP.md) - Get running in 15 minutes
 - [Architecture Overview](./architecture/overview.md) - System design
 - [Slash Commands](./commands/slash-commands.md) - Available commands
-- [API Reference](./api/reference.md) - OpenCode API endpoints
+- [Auth Overview](./auth/overview.md) - Credential management
 
 ## Architecture
 
@@ -112,5 +111,3 @@ No external OpenCode server needed - the bridge creates Vercel Sandboxes and run
 ## Related Docs
 
 - [Vercel Sandbox Docs](../vercel-sandbox/) - Sandbox reference
-- [SETUP.md](../../SETUP.md) - Installation guide
-- [AGENTS.md](../../AGENTS.md) - Agent instructions

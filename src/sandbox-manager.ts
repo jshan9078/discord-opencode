@@ -159,7 +159,7 @@ export class SandboxManager {
   private buildCredentialsEnv(): string {
     const parts: string[] = []
     for (const key of Object.keys(process.env)) {
-      if (key.endsWith("_API_KEY") && key !== "GITHUB_TOKEN") {
+      if (key.endsWith("_API_KEY") || key === "GITHUB_TOKEN") {
         parts.push(`${key}=${process.env[key]} `)
       }
     }

@@ -30,3 +30,5 @@ coverage/
 # Cache
 .cache/
 *.tsbuildinfo
+.vercel
+.env*.local

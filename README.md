@@ -37,36 +37,38 @@ You (Discord)          ←    Streams results back
 git clone <this-repo>
 cd discord-bridge
 pnpm install
-
-# Link to Vercel
-vercel link
-vercel env pull
-
-# Deploy
-vercel deploy --prod
 ```
 
 ### 3. Configure Environment Variables
 
-In Vercel dashboard, set:
+**First**, set these in Vercel dashboard (not locally):
 
 | Variable | Description |
 |----------|-------------|
 | `DISCORD_APPLICATION_ID` | Your Discord app ID |
 | `DISCORD_PUBLIC_KEY` | Your Discord public key (hex) |
 | `DISCORD_BOT_TOKEN` | Your Discord bot token (needed for thread creation) |
-| `GITHUB_TOKEN` | GitHub personal access token |
+| `GITHUB_TOKEN` | GitHub personal access token (needs `repo`, `read:user`, `gist` scopes) |
 
 **Provider API keys** (optional):
 - `OPENAI_API_KEY`
 - `ANTHROPIC_API_KEY`
 - etc.
 
-**User config** (optional - your personal OpenCode settings):
+**User config** (optional):
 - `OPENCODE_GIST_URL` = URL of a private GitHub gist with your `opencode.jsonc`
-- To create: run `pnpm exec bun scripts/bundle-config.ts` (will prompt for GitHub token)
+- To create: run `bun scripts/bundle-config.ts` (will prompt for GitHub token or use `GITHUB_TOKEN` env var)
 
-No OpenCode URL needed - the bridge creates sandboxes and runs OpenCode automatically.
+Now pull env vars locally and deploy:
+
+```bash
+# Link to Vercel and pull env vars (must be set in dashboard first!)
+vercel link
+vercel env pull
+
+# Deploy
+vercel deploy --prod
+```
 
 ### 4. Register Slash Commands
 
@@ -114,11 +116,10 @@ It relies on whatever subscription / providers you have on OpenCode.
 
 ## Documentation
 
-- [Setup Guide](./SETUP.md) - Detailed setup instructions
+- [Docs Index](./docs/index.md) - All documentation
 - [Architecture](./docs/architecture/overview.md) - How it works
 - [Slash Commands](./docs/commands/slash-commands.md) - Command reference
 - [Auth Overview](./docs/auth/overview.md) - Credential management
-- [Source Files](./docs/components/source-files.md) - Code reference
 
 ## License
 

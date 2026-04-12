@@ -27,9 +27,8 @@ You (Discord)          ←    Streams results back
 1. Go to [Discord Developer Portal](https://discord.com/developers/applications)
 2. Create a new application
 3. Get your **Public Key** and **Application ID**
-4. Enable Message Content Intent
-5. Generate OAuth2 URL with `bot` scope and `Send Messages` permission
-6. Invite the bot to your server
+4. Go to "OAuth2 > URL Generator", select `bot` scope, add `Send Messages` permission
+5. Copy the generated URL and invite the bot to your server
 
 ### 2. Deploy to Vercel
 

@@ -1,0 +1,132 @@
+/**
+ * Orchestrates the full prompt flow: auth, session, execution, event streaming.
+ * The main entry point for processing /ask commands.
+ */
+import type { ChannelStateStore } from "./channel-state-store"
+import type { CredentialStore } from "./credential-store"
+import { ensureProviderAuth } from "./auth-bootstrap"
+import { resolveSessionForActiveProfile } from "./session-manager"
+import { relaySessionEvents, type EventRelaySink } from "./event-relay"
+import type { ProviderRegistry } from "./provider-registry"
+import type { OpencodeRuntime } from "./opencode-runtime"
+import { ChannelStateStore as ChannelStoreClass } from "./channel-state-store"
+
+export interface RuntimeClientAdapter {
+  auth: {
+    set(input: { path: { id: string }; body: Record<string, unknown> }): Promise<unknown>
+  }
+  provider: {
+    auth(): Promise<{ data: Record<string, Array<{ label: string }>> }>
+    oauth: {
+      authorize(input: { path: { id: string }; body: { method: number } }): Promise<{ data: Record<string, unknown> }>
+      callback(input: { path: { id: string }; body: { method: number } }): Promise<{ data: Record<string, unknown> }>
+    }
+  }
+  session: {
+    create(input: { body: { title: string } }): Promise<{ data: { id: string } }>
+  }
+  event: {
+    subscribe(input?: { signal?: AbortSignal }): {
+      stream: AsyncIterable<{ type: string; sessionID?: string; properties?: Record<string, unknown> }>
+    }
+  }
+}
+
+function toClient(runtime: OpencodeRuntime): RuntimeClientAdapter {
+  return {
+    auth: {
+      set: ({ path, body }) => runtime.setProviderAuth(path.id, body),
+    },
+    provider: {
+      auth: async () => ({ data: await runtime.fetchProviderAuthMethods() }),
+      oauth: {
+        authorize: async () => ({ data: {} }),
+        callback: async () => ({ data: {} }),
+      },
+    },
+    session: {
+      create: async ({ body }) => ({ data: { id: await runtime.createSession(body.title) } }),
+    },
+    event: {
+      subscribe: (input) => ({ stream: runtime.subscribeEvents(input?.signal) }),
+    },
+  }
+}
+
+export async function executePromptForChannel(
+  runtime: OpencodeRuntime,
+  registry: ProviderRegistry,
+  credentials: CredentialStore,
+  stateStore: ChannelStateStore,
+  channelId: string,
+  prompt: string,
+  sink: EventRelaySink,
+  options: {
+    forceNewSession?: boolean
+    recoveryContext?: string
+  } = {},
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const state = stateStore.get(channelId)
+  if (!state.activeProviderId) {
+    return { ok: false, message: "No active provider. Run: use provider <provider>" }
+  }
+  if (!state.activeModelId) {
+    return { ok: false, message: "No active model. Run: use model <model>" }
+  }
+
+  await runtime.syncRegistry(registry)
+
+  const client = toClient(runtime)
+  const authResult = await ensureProviderAuth(client, registry, credentials, state.activeProviderId)
+  if (authResult.type === "needs_local_oauth") {
+    return {
+      ok: false,
+      message: `Provider '${state.activeProviderId}' needs local OAuth setup. Run: bridge auth connect ${state.activeProviderId}`,
+    }
+  }
+  if (authResult.type === "needs_local_api_key") {
+    return {
+      ok: false,
+      message: `Provider '${state.activeProviderId}' needs local API key setup. Run: bridge auth set-key ${state.activeProviderId} --stdin`,
+    }
+  }
+
+  let sessionId: string
+  if (options.forceNewSession) {
+    const profileKey = `${state.activeProviderId}:${state.activeModelId}`
+    sessionId = await runtime.createSession(`discord-${channelId}-${profileKey}`)
+    stateStore.setSessionForActiveProfile(channelId, sessionId)
+  } else {
+    sessionId = await resolveSessionForActiveProfile(client, stateStore, channelId)
+  }
+
+  const relayPromise = relaySessionEvents(client, sink, sessionId, {
+    maxIdleMs: 45_000,
+    maxTotalMs: 10 * 60_000,
+  })
+  const finalPrompt = options.recoveryContext
+    ? [
+        "Context recovery note: Use the following Discord channel history summary to reconstruct prior intent. Treat it as approximate context and continue naturally.",
+        "",
+        options.recoveryContext,
+        "",
+        "Current user request:",
+        prompt,
+      ].join("\n")
+    : prompt
+
+  await runtime.promptAsync(sessionId, finalPrompt)
+  const relayResult = await relayPromise
+
+  if (!relayResult.completed && relayResult.timedOut) {
+    return {
+      ok: false,
+      message:
+        relayResult.reason === "idle_timeout"
+          ? "Session timed out waiting for events."
+          : "Session timed out before completion.",
+    }
+  }
+
+  return { ok: true }
+}

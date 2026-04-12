@@ -1,0 +1,212 @@
+/**
+ * Parses text commands (from slash command mapping) into structured types.
+ * Handles providers, models, project, auth, and prompt commands.
+ */
+export type ParsedCommand =
+  | { type: "providers" }
+  | { type: "models"; providerId?: string }
+  | { type: "use_provider"; providerId: string }
+  | { type: "use_model"; modelId: string }
+  | { type: "project_select" }
+  | { type: "project_set"; repo: string; branch?: string }
+  | { type: "project_clear" }
+  | { type: "project_show" }
+  | { type: "auth_connect"; providerId: string; methodHint?: string }
+  | { type: "auth_set_key"; providerId: string }
+  | { type: "auth_disconnect"; providerId: string }
+  | { type: "help" }
+  | { type: "invalid"; message: string }
+  | { type: "prompt"; text: string }
+
+function tokenize(input: string): string[] {
+  const tokens: string[] = []
+  const re = /"([^"]+)"|'([^']+)'|(\S+)/g
+  let match: RegExpExecArray | null
+  while ((match = re.exec(input)) !== null) {
+    tokens.push(match[1] || match[2] || match[3])
+  }
+  return tokens
+}
+
+function normalizeAlias(tokens: string[]): string[] {
+  if (tokens.length === 0) {
+    return tokens
+  }
+
+  const lower = tokens.map((token) => token.toLowerCase())
+
+  if (lower[0] === "list" && lower[1] === "providers") {
+    return ["providers"]
+  }
+  if (lower[0] === "list" && lower[1] === "models") {
+    return ["models", ...tokens.slice(2)]
+  }
+  if (lower[0] === "switch" && lower[1] === "provider") {
+    return ["use", "provider", ...tokens.slice(2)]
+  }
+  if (lower[0] === "switch" && lower[1] === "model") {
+    return ["use", "model", ...tokens.slice(2)]
+  }
+  if (lower[0] === "connect") {
+    return ["auth", "connect", ...tokens.slice(1)]
+  }
+  if (lower[0] === "set" && lower[1] === "key") {
+    return ["auth", "set-key", ...tokens.slice(2)]
+  }
+
+  return tokens
+}
+
+function isLikelyCommandWord(firstWord: string): boolean {
+  return [
+    "providers",
+    "models",
+    "use",
+    "auth",
+    "project",
+    "help",
+    "list",
+    "switch",
+    "connect",
+    "set",
+  ].includes(firstWord.toLowerCase())
+}
+
+function normalizeRepoUrl(url: string): string {
+  let normalized = url.trim()
+  if (normalized.startsWith("https://")) {
+    return normalized.replace(/\.git$/, "")
+  }
+  if (normalized.startsWith("git@")) {
+    const match = normalized.match(/^git@github\.com:(.+)$/)
+    if (match) {
+      return `https://github.com/${match[1]}`.replace(/\.git$/, "")
+    }
+  }
+  if (normalized.includes("/") && !normalized.includes("github.com")) {
+    return `https://github.com/${normalized}`
+  }
+  if (normalized.includes("github.com")) {
+    return `https://${normalized.replace(/^https?:\/\//, "")}`.replace(/\.git$/, "")
+  }
+  return normalized
+}
+
+export function parseDiscordCommand(input: string): ParsedCommand {
+  const trimmed = input.trim()
+  if (!trimmed) {
+    return { type: "help" }
+  }
+
+  const initialTokens = tokenize(trimmed)
+  if (initialTokens.length === 0) {
+    return { type: "help" }
+  }
+
+  const tokens = normalizeAlias(initialTokens)
+  const lower = tokens.map((token) => token.toLowerCase())
+
+  if (lower[0] === "providers") {
+    if (tokens.length > 1) {
+      return { type: "invalid", message: "Usage: providers" }
+    }
+    return { type: "providers" }
+  }
+
+  if (lower[0] === "models") {
+    if (tokens.length === 1) {
+      return { type: "models" }
+    }
+    if (tokens.length === 2) {
+      return { type: "models", providerId: tokens[1] }
+    }
+    return { type: "invalid", message: "Usage: models [provider]" }
+  }
+
+  if (lower[0] === "use" && lower[1] === "provider") {
+    if (tokens.length !== 3) {
+      return { type: "invalid", message: "Usage: use provider <provider>" }
+    }
+    return { type: "use_provider", providerId: tokens[2] }
+  }
+
+  if (lower[0] === "use" && lower[1] === "model") {
+    if (tokens.length !== 3) {
+      return { type: "invalid", message: "Usage: use model <model>" }
+    }
+    return { type: "use_model", modelId: tokens[2] }
+  }
+
+  if (lower[0] === "project") {
+    if (lower[1] === "select") {
+      return { type: "project_select" }
+    }
+    if (lower[1] === "set") {
+      if (tokens.length < 3) {
+        return { type: "invalid", message: "Usage: project set <repo> [branch]" }
+      }
+      const repo = normalizeRepoUrl(tokens[2])
+      const branch = tokens[3] || "main"
+      return { type: "project_set", repo, branch }
+    }
+    if (lower[1] === "clear") {
+      return { type: "project_clear" }
+    }
+    if (lower[1] === "show" || lower[1] === undefined) {
+      return { type: "project_show" }
+    }
+    return { type: "invalid", message: "Usage: project [select|set|clear|show]" }
+  }
+
+  if (lower[0] === "auth" && lower[1] === "connect") {
+    if (tokens.length < 3 || tokens.length > 4) {
+      return { type: "invalid", message: "Usage: auth connect <provider> [method]" }
+    }
+    return {
+      type: "auth_connect",
+      providerId: tokens[2],
+      methodHint: tokens[3],
+    }
+  }
+
+  if (lower[0] === "auth" && lower[1] === "set-key") {
+    if (tokens.length !== 3) {
+      return { type: "invalid", message: "Usage: auth set-key <provider>" }
+    }
+    return { type: "auth_set_key", providerId: tokens[2] }
+  }
+
+  if (lower[0] === "auth" && lower[1] === "disconnect") {
+    if (tokens.length !== 3) {
+      return { type: "invalid", message: "Usage: auth disconnect <provider>" }
+    }
+    return { type: "auth_disconnect", providerId: tokens[2] }
+  }
+
+  if (lower[0] === "help") {
+    return { type: "help" }
+  }
+
+  if (isLikelyCommandWord(tokens[0])) {
+    return { type: "invalid", message: "Unknown command. Try: help" }
+  }
+
+  return { type: "prompt", text: trimmed }
+}
+
+export function commandHelpText(): string {
+  return [
+    "Commands:",
+    "- providers",
+    "- models [provider]",
+    "- use provider <provider>",
+    "- use model <model>",
+    "- project select (interactive repo/branch picker)",
+    "- project set <repo> [branch]",
+    "- project clear",
+    "- project show",
+    "- auth connect <provider> [method]",
+    "- auth set-key <provider>",
+    "- auth disconnect <provider>",
+  ].join("\n")
+}

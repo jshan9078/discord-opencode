@@ -267,6 +267,18 @@ export class SandboxManager {
     const logText = logResult?.stdout || "(could not read log)"
     console.error(`[SandboxManager] OpenCode startup log: ${logText}`)
 
+    const opencodeCheck = await sandbox.runCommand({
+      cmd: "bash",
+      args: ["-c", "which opencode || echo 'opencode not found'"],
+    }).catch(() => null)
+    console.error(`[SandboxManager] OpenCode path check: ${opencodeCheck?.stdout || "error"}`)
+
+    const versionCheck = await sandbox.runCommand({
+      cmd: "opencode",
+      args: ["--version"],
+    }).catch(() => null)
+    console.error(`[SandboxManager] OpenCode version: ${versionCheck?.stdout || versionCheck?.stderr || "error"}`)
+
     throw new Error("OpenCode server failed to start")
   }
 

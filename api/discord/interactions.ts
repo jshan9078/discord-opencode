@@ -663,13 +663,18 @@ async function handleProjectSelectMenu(interaction: Interaction): Promise<Respon
 }
 
 async function handleAuthConnect(interaction: Interaction, text: string): Promise<Response> {
-  const [{ getSandboxManager }, { ChannelStateStore }] = await Promise.all([
+  const [{ getSandboxManager }, { ChannelStateStore }, { OAuthTokenStore }] = await Promise.all([
     import("../../src/sandbox-manager.js"),
     import("../../src/channel-state-store.js"),
+    import("../../src/oauth-token-store.js"),
   ])
   const channelId = interaction.channel_id
+  const userId = getInteractionUserId(interaction)
   if (!channelId) {
     return json({ type: 4, data: { content: "This command must be used in a channel." } })
+  }
+  if (!userId) {
+    return json({ type: 4, data: { content: "Missing user ID for auth flow." } })
   }
 
   const stateStore = new ChannelStateStore()
@@ -688,6 +693,7 @@ async function handleAuthConnect(interaction: Interaction, text: string): Promis
   }
 
   const sandboxManager = getSandboxManager()
+  const oauthStore = new OAuthTokenStore()
 
   if (state.pendingOAuth?.providerId === providerId && state.pendingOAuth?.deviceAuthId) {
     try {
@@ -699,13 +705,14 @@ async function handleAuthConnect(interaction: Interaction, text: string): Promis
       )
 
       if (completeResult.success && completeResult.tokens) {
+        await oauthStore.setUserProviderAuth(userId, providerId, completeResult.tokens)
         state.pendingOAuth = undefined
         stateStore.set(state)
 
         return json({
           type: 4,
           data: {
-            content: `✅ Successfully connected to **${providerId}**!\n\nYou can now use this provider with \`/use-provider ${providerId}\``,
+            content: `✅ Successfully connected to **${providerId}**!\n\nCredentials are now saved for your user and will be reused across sandbox sessions.`,
           },
         })
       }
@@ -769,6 +776,30 @@ async function handleAuthConnect(interaction: Interaction, text: string): Promis
   }
 }
 
+async function processAuthConnectInteraction(interaction: Interaction, text: string): Promise<void> {
+  try {
+    const response = await handleAuthConnect(interaction, text)
+    const raw = await response.text()
+    let content = "Auth flow completed."
+
+    try {
+      const parsed = JSON.parse(raw) as { data?: { content?: string } }
+      if (parsed.data?.content) {
+        content = parsed.data.content
+      }
+    } catch {
+      if (raw) {
+        content = raw
+      }
+    }
+
+    await sendFollowup(interaction.application_id, interaction.token, content)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error"
+    await sendFollowup(interaction.application_id, interaction.token, `OAuth error: ${message}`)
+  }
+}
+
 async function handleProjectCommand(interaction: Interaction): Promise<Response> {
   const { getGitHubClient } = await import("../../src/github-client.js")
   const gh = getGitHubClient()
@@ -815,20 +846,22 @@ async function handleProjectCommand(interaction: Interaction): Promise<Response>
 
 async function processAskInteraction(interaction: Interaction, prompt: string): Promise<void> {
   try {
-    const [
+  const [
     { ChannelStateStore },
     { CredentialStore },
+    { OAuthTokenStore },
     { OpencodeRuntime },
     { executePromptForChannel },
     { getSandboxManager },
     { getRecoveryContext },
     { loadProviderRegistry },
     { SelectionStore },
-    ] = await Promise.all([
-      import("../../src/channel-state-store.js"),
-      import("../../src/credential-store.js"),
-      import("../../src/opencode-runtime.js"),
-      import("../../src/prompt-orchestrator.js"),
+  ] = await Promise.all([
+    import("../../src/channel-state-store.js"),
+    import("../../src/credential-store.js"),
+    import("../../src/oauth-token-store.js"),
+    import("../../src/opencode-runtime.js"),
+    import("../../src/prompt-orchestrator.js"),
       import("../../src/sandbox-manager.js"),
       import("../../src/discord-message-fetcher.js"),
       import("../../src/provider-registry-store.js"),
@@ -967,7 +1000,9 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
 
     const runtime = new OpencodeRuntime(sandboxContext.opencodeBaseUrl, sandboxContext.opencodePassword)
     const credentials = new CredentialStore()
+    const oauthStore = new OAuthTokenStore()
     const registry = await loadProviderRegistry()
+    const providerAuth = await oauthStore.getUserProviderAuth(userId, selection.providerId)
 
   // Check if sandbox was newly created (old one expired) - fetch recovery context
     const isNewSandbox = oldSandboxId && oldSandboxId !== sandboxContext.sandboxId
@@ -992,9 +1027,9 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
     const threadIdForFollowups = effectiveThreadId
 
     const result = await executePromptForChannel(
-    runtime,
-    registry,
-    credentials,
+      runtime,
+      registry,
+      credentials,
     stateStore,
     conversationId,
     {
@@ -1042,10 +1077,11 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
         await sendFollowup(interaction.application_id, interaction.token, `> Error: ${errorMessage}`, undefined, threadIdForFollowups)
       },
     },
-    {
-      recoveryContext: recoveryContext || undefined,
-    },
-  )
+      {
+        recoveryContext: recoveryContext || undefined,
+        providerAuth,
+      },
+    )
 
     if (!result.ok) {
       await sendFollowup(interaction.application_id, interaction.token, result.message, undefined, threadIdForFollowups)
@@ -1180,7 +1216,8 @@ export default async function handler(
     }
 
     if (mapped.text.startsWith("auth-connect") || mapped.text.startsWith("auth connect")) {
-      await sendNodeResponse(res, await handleAuthConnect(interaction, mapped.text))
+      waitUntil(processAuthConnectInteraction(interaction, mapped.text))
+      await sendNodeResponse(res, json({ type: 5 }))
       return
     }
 

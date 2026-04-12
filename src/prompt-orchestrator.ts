@@ -68,6 +68,7 @@ export async function executePromptForChannel(
   options: {
     forceNewSession?: boolean
     recoveryContext?: string
+    providerAuth?: Record<string, unknown>
   } = {},
 ): Promise<
   | {
@@ -97,19 +98,31 @@ export async function executePromptForChannel(
   await runtime.syncRegistry(registry)
 
   const client = toClient(runtime)
-  const authResult = await ensureProviderAuth(client, registry, credentials, providerId)
-  if (authResult.type === "needs_local_oauth") {
-    return {
-      ok: false,
-      message:
-        `Provider '${providerId}' needs OAuth setup. ` +
-        `Run /auth-connect ${providerId} in Discord, complete the login flow, then run the same command again to finish callback.`,
+  let authPrimed = false
+  if (options.providerAuth) {
+    try {
+      await runtime.setProviderAuth(providerId, options.providerAuth)
+      authPrimed = true
+    } catch {
+      // Fall through to normal auth bootstrap path
     }
   }
-  if (authResult.type === "needs_local_api_key") {
-    return {
-      ok: false,
-      message: `Provider '${providerId}' needs an API key. Set ${providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY in Vercel project env vars.`,
+
+  if (!authPrimed) {
+    const authResult = await ensureProviderAuth(client, registry, credentials, providerId)
+    if (authResult.type === "needs_local_oauth") {
+      return {
+        ok: false,
+        message:
+          `Provider '${providerId}' needs OAuth setup. ` +
+          `Run /auth-connect ${providerId} in Discord, complete the login flow, then run the same command again to finish callback.`,
+      }
+    }
+    if (authResult.type === "needs_local_api_key") {
+      return {
+        ok: false,
+        message: `Provider '${providerId}' needs an API key. Set ${providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY in Vercel project env vars.`,
+      }
     }
   }
 

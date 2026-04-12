@@ -504,7 +504,6 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
     channelId,
     prompt,
     {
-      recoveryContext: recoveryContext || undefined,
       onTextDelta: async (text) => {
         responseBuffer += text
       },
@@ -543,6 +542,9 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
       onError: async (errorMessage: string) => {
         await sendFollowup(interaction.application_id, interaction.token, `> Error: ${errorMessage}`, undefined, threadIdForFollowups)
       },
+    },
+    {
+      recoveryContext: recoveryContext || undefined,
     },
   )
 

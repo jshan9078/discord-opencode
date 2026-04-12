@@ -103,38 +103,30 @@ Sets the model for subsequent `/ask` commands. Creates a new session.
 
 ### /auth-connect
 
-Show instructions for connecting a provider via OAuth.
+Start OAuth flow for a provider (e.g., ChatGPT Pro/Plus).
 
 ```
-/auth-connect openai
-/auth-connect anthropic device
+/auth-connect chatgpt
 ```
 
 **Options:**
 - `provider` (required): Provider ID
-- `method` (optional): Hint for auth method (e.g., "oauth", "device", "browser")
 
-**Response:**
-Instructions to run on the host machine (not in Discord):
-```bash
-pnpm exec bun scripts/auth.ts connect openai
-```
+**Flow:**
+1. Run `/auth-connect <provider>` - you'll get a URL and code
+2. Visit the URL on your machine, enter the code
+3. Run `/auth-connect <provider>` again to complete
+
+Credentials are stored in the sandbox and persist across prompts.
 
 ### /auth-set-key
 
-Show instructions for setting an API key.
+This command is deprecated. Use environment variables instead:
 
 ```
-/auth-set-key openai
-```
-
-**Options:**
-- `provider` (required): Provider ID
-
-**Response:**
-Instructions to run on the host machine:
-```bash
-printf %s "$OPENAI_API_KEY" | pnpm exec bun scripts/auth.ts set-key openai --stdin
+# In Vercel dashboard
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
 ```
 
 ### /auth-disconnect

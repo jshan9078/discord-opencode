@@ -71,12 +71,21 @@ No OpenCode URL needed - the bridge creates sandboxes and runs OpenCode automati
 DISCORD_APPLICATION_ID=xxx pnpm exec bun scripts/register-commands.ts
 ```
 
-### 5. Set Provider API Keys (Optional)
+### 5. Set Provider Credentials
 
-Add provider API keys as environment variables in Vercel:
-- `OPENAI_API_KEY`
-- `ANTHROPIC_API_KEY`
-- etc.
+**Option 1: API Keys (env vars)**
+```bash
+OPENAI_API_KEY=sk-...      # OpenAI
+ANTHROPIC_API_KEY=sk-ant-... # Anthropic
+# Format: {PROVIDER}_API_KEY (uppercase)
+```
+
+**Option 2: OAuth (e.g., ChatGPT Pro/Plus)**
+```bash
+/auth-connect chatgpt
+# Follow the URL/code displayed in Discord
+# Run /auth-connect chatgpt again after completing
+```
 
 ## Commands
 
@@ -91,6 +100,7 @@ Add provider API keys as environment variables in Vercel:
 | `/models` | List available models |
 | `/use-provider <id>` | Switch provider |
 | `/use-model <id>` | Switch model |
+| `/auth-connect <provider>` | OAuth flow for providers (e.g., chatgpt) |
 
 ## Pricing
 Everything is free out of the box if you use the Vercel hobby tier.

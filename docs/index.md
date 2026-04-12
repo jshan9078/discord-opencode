@@ -51,17 +51,21 @@ See [Slash Commands](./commands/slash-commands.md) for details.
 
 ### Authentication
 
-Credentials are entered on the host machine, never in Discord:
+Credentials are set via environment variables:
 
+**API Keys:**
 ```bash
-# Connect OAuth provider
-pnpm exec bun scripts/auth.ts connect openai
+OPENAI_API_KEY=sk-...      # OpenAI
+ANTHROPIC_API_KEY=sk-ant-... # Anthropic
+```
 
-# Set API key
-printf %s "$ANTHROPIC_API_KEY" | pnpm exec bun scripts/auth.ts set-key anthropic --stdin
+Format: `{PROVIDER}_API_KEY` (uppercase)
 
-# GitHub token
-printf %s "$GITHUB_TOKEN" | pnpm exec bun scripts/auth.ts github --stdin
+**OAuth:**
+```bash
+/auth-connect chatgpt
+# Follow the URL/code in Discord
+# Run again after completing
 ```
 
 See [Auth Overview](./auth/overview.md) for details.

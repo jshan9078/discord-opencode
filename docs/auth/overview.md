@@ -41,14 +41,8 @@ OpenCode supports multiple auth methods per provider:
 | Method | Description | Storage |
 |--------|-------------|---------|
 | `api-key` | Direct API key | Env var `{PROVIDER}_API_KEY` |
-| `oauth` | OAuth flow | Not yet supported via env vars |
+| `oauth` | OAuth flow via `/auth-connect` | Stored in sandbox |
 | `none` | No auth required | (free models) |
-|--------|-------------|---------|
-| `oauth` | OAuth flow with refresh tokens | access_token, refresh_token |
-| `api-key` | Direct API key | api_key |
-| `none` | No auth required (free models) | (none) |
-| `device` | Device auth flow | (varies) |
-| `browser` | Browser-based auth | (varies) |
 
 The bridge discovers available methods via `GET /provider/auth`.
 
@@ -105,30 +99,34 @@ printf %s "$ANTHROPIC_API_KEY" | pnpm exec bun scripts/auth.ts set-key anthropic
 printf %s "$GITHUB_TOKEN" | pnpm exec bun scripts/auth.ts github --stdin
 ```
 
-### Via Code
+## Setting Credentials
 
-```typescript
-const credentials = new CredentialStore(bridgeSecret)
+### Option 1: Environment Variables (API Keys)
 
-// Set API key
-credentials.setProviderAuth("anthropic", {
-  method: "api-key",
-  api_key: "sk-...",
-})
-
-// Get API key
-const auth = credentials.getProviderAuth("anthropic")
+Set in Vercel dashboard:
 ```
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Format: `{PROVIDER}_API_KEY` (uppercase, underscores)
+
+### Option 2: OAuth via Discord
+
+Run in Discord:
+```
+/auth-connect chatgpt
+```
+
+Follow the URL/code displayed, then run `/auth-connect chatgpt` again to complete.
+
+Credentials are stored in the sandbox filesystem and persist across prompts.
 
 ## Token Refresh
 
-OAuth tokens expire. OpenCode handles refresh automatically inside the sandbox. The bridge can re-sync from a healthy sandbox:
+OAuth tokens expire. OpenCode handles refresh automatically inside the sandbox.
 
-1. Token refresh succeeds in sandbox
-2. On next prompt, credentials are sent again
-3. Updated tokens are now in the bundle
-
-If refresh fails (token revoked), the user must re-authenticate via the CLI.
+If refresh fails (token revoked), run `/auth-connect <provider>` again to re-authenticate.
 
 ## GitHub Auth
 
@@ -148,10 +146,10 @@ const repos = await gh.listRepos()
 |----------|---------|
 | `BRIDGE_SECRET` | Key for encrypting credential store |
 | `GITHUB_TOKEN` | GitHub API token |
+| `{PROVIDER}_API_KEY` | Provider API keys (e.g., OPENAI_API_KEY) |
 
 ## Related Files
 
-- `src/credential-store.ts` - Encrypted credential storage
+- `src/sandbox-manager.ts` - Sandbox and credential injection
 - `src/auth-bootstrap.ts` - Auth bootstrapping
 - `src/provider-registry.ts` - Provider/method registry
-- `scripts/auth.ts` - CLI for managing auth

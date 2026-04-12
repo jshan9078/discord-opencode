@@ -32,9 +32,30 @@ type ModelsDevProvider = {
 
 let cachedRegistry: { registry: ProviderRegistry; expiresAt: number } | undefined
 
+function enrichChatgptModels(document: RegistryDocument): RegistryDocument {
+  const chatgpt = document.chatgpt
+  const openai = document.openai
+  if (!chatgpt || !openai) {
+    return document
+  }
+
+  if ((chatgpt.models || []).length > 0) {
+    return document
+  }
+
+  return {
+    ...document,
+    chatgpt: {
+      ...chatgpt,
+      models: [...(openai.models || [])],
+    },
+  }
+}
+
 function toRegistry(document: RegistryDocument): ProviderRegistry {
+  const normalized = enrichChatgptModels(document)
   const registry = new ProviderRegistry()
-  const providers: ProviderRecord[] = Object.entries(document).map(([id, value]) => ({
+  const providers: ProviderRecord[] = Object.entries(normalized).map(([id, value]) => ({
     id,
     methods: (value.methods || []).map((method) => ({
       label: method.label,
@@ -83,7 +104,7 @@ async function fetchModelsDevRegistryDocument(): Promise<RegistryDocument> {
     }
   }
 
-  return document
+  return enrichChatgptModels(document)
 }
 
 async function fetchStoredRegistryDocument(): Promise<{ document: RegistryDocument; url: string } | undefined> {

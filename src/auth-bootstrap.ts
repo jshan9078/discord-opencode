@@ -12,6 +12,26 @@ export type AuthResult =
   | { type: "needs_local_oauth" }
   | { type: "needs_local_api_key" }
 
+function providerEnvCandidates(providerId: string): string[] {
+  const normalized = providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_")
+  const candidates = [
+    `${normalized}_API_KEY`,
+  ]
+
+  if (providerId === "google") {
+    candidates.push("GOOGLE_GENERATIVEAI_API_KEY")
+  }
+
+  return candidates
+}
+
+function hasProviderApiKeyInEnv(providerId: string): boolean {
+  return providerEnvCandidates(providerId).some((key) => {
+    const value = process.env[key]
+    return typeof value === "string" && value.trim().length > 0
+  })
+}
+
 export async function ensureProviderAuth(
   client: RuntimeClientAdapter,
   registry: ProviderRegistry,
@@ -36,12 +56,17 @@ export async function ensureProviderAuth(
   const methods = provider.methods
   const hasOAuth = methods.some((m) => m.kind === "oauth")
   const hasApiKey = methods.some((m) => m.kind === "api-key")
+  const hasEnvApiKey = hasProviderApiKeyInEnv(providerId)
 
-  if (hasOAuth && !stored) {
-    return { type: "needs_local_oauth" }
+  if (hasEnvApiKey) {
+    return { type: "ok" }
   }
+
   if (hasApiKey && !stored) {
     return { type: "needs_local_api_key" }
+  }
+  if (hasOAuth && !stored) {
+    return { type: "needs_local_oauth" }
   }
 
   return { type: "ok" }

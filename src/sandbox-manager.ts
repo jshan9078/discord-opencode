@@ -371,7 +371,7 @@ export class SandboxManager {
   async startOAuth(channelId: string, providerId: string, method?: number): Promise<OAuthStartResult> {
     const context = await this.getOrCreate(channelId, undefined)
     const url = `${context.opencodeBaseUrl}/provider/${providerId}/oauth/authorize`
-    const body = method !== undefined ? JSON.stringify({ method }) : "{}"
+    const body = JSON.stringify({ method: method ?? 0 })
 
     const response = await fetch(url, {
       method: "POST",
@@ -383,7 +383,8 @@ export class SandboxManager {
     })
 
     if (!response.ok) {
-      return { success: false, message: `OAuth start failed: ${response.status}` }
+      const details = await response.text().catch(() => "")
+      return { success: false, message: `OAuth start failed: ${response.status}${details ? ` ${details}` : ""}` }
     }
 
     const data = (await response.json()) as { data?: { url?: string; user_code?: string; instructions?: string; device_auth_id?: string } }

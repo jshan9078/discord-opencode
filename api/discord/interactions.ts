@@ -899,7 +899,20 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
   // - If /ask is invoked in a normal channel, use user defaults.
   const selectionThreadId = commandIsInThread ? effectiveThreadId : undefined
 
-  const selection = await selectionStore.resolveSelection(userId, selectionThreadId)
+  let selection = await selectionStore.resolveSelection(userId, selectionThreadId)
+  const userDefaults = await selectionStore.getUserDefaults(userId)
+
+  if (selection?.providerId && !selection.modelId && userDefaults?.providerId === selection.providerId && userDefaults.modelId) {
+    selection = {
+      providerId: selection.providerId,
+      modelId: userDefaults.modelId,
+    }
+
+    if (selectionThreadId) {
+      await selectionStore.setThreadSelection(selectionThreadId, selection)
+    }
+  }
+
   if (!commandIsInThread && effectiveThreadId) {
     await selectionStore.initializeThreadFromUser(effectiveThreadId, userId)
   }

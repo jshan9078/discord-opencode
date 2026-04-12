@@ -1135,8 +1135,7 @@ export default async function handler(
         res,
         `${result.created ? "Created" : "Updated"} provider registry.\n` +
           `Providers: ${result.providerCount}\n` +
-          `Models: ${result.modelCount}\n` +
-          `Registry blob: ${result.blobUrl}`,
+          `Models: ${result.modelCount}`,
       )
       return
     }

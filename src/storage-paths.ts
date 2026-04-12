@@ -15,6 +15,10 @@ export function getBaseDir(): string {
     return path.join(tempRoot, "opencode-chat-bridge")
   }
 
+  if (process.platform !== "win32") {
+    return "/tmp/opencode-chat-bridge"
+  }
+
   return path.join(homedir(), ".cache", "opencode-chat-bridge")
 }
 

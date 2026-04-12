@@ -18,7 +18,7 @@ export interface ChannelState {
   threadId?: string
   pendingOAuth?: {
     providerId: string
-    deviceAuthId: string
+    deviceAuthId?: string
     timestamp: number
   }
 }

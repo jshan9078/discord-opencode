@@ -494,7 +494,11 @@ export class SandboxManager {
     }
 
     const url = `${context.opencodeBaseUrl}/provider/${providerId}/oauth/callback`
-    const body = JSON.stringify({ method: resolvedMethod, device_auth_id: deviceAuthId })
+    const body = JSON.stringify(
+      deviceAuthId
+        ? { method: resolvedMethod, device_auth_id: deviceAuthId }
+        : { method: resolvedMethod },
+    )
 
     const response = await fetch(url, {
       method: "POST",

@@ -702,7 +702,7 @@ async function handleAuthConnect(interaction: Interaction, text: string): Promis
     ? state.pendingOAuth
     : pendingFromBlob
 
-  if (pendingOAuth?.providerId === providerId && pendingOAuth?.deviceAuthId) {
+  if (pendingOAuth?.providerId === providerId) {
     try {
       const completeResult: OAuthCompleteResult = await sandboxManager.completeOAuth(
         channelId,
@@ -771,23 +771,19 @@ async function handleAuthConnect(interaction: Interaction, text: string): Promis
       })
     }
 
-    if (oauthResult.deviceAuthId) {
-      state.pendingOAuth = {
-        providerId,
-        deviceAuthId: oauthResult.deviceAuthId,
-        timestamp: Date.now(),
-      }
-      stateStore.set(state)
-      await oauthStore.setPendingOAuth(userId, providerId, {
-        providerId,
-        deviceAuthId: oauthResult.deviceAuthId,
-        sandboxId: oauthResult.sandboxId,
-        opencodePassword: oauthResult.opencodePassword,
-        timestamp: Date.now(),
-      })
-    } else {
-      stateStore.set(state)
+    state.pendingOAuth = {
+      providerId,
+      deviceAuthId: oauthResult.deviceAuthId,
+      timestamp: Date.now(),
     }
+    stateStore.set(state)
+    await oauthStore.setPendingOAuth(userId, providerId, {
+      providerId,
+      deviceAuthId: oauthResult.deviceAuthId,
+      sandboxId: oauthResult.sandboxId,
+      opencodePassword: oauthResult.opencodePassword,
+      timestamp: Date.now(),
+    })
 
     const message = [
       `**OAuth for ${providerId}**`,

@@ -86,16 +86,14 @@ function defaultBundle(): CredentialBundle {
 }
 
 export class CredentialStore {
-  constructor(private readonly secret: string) {
-    if (!secret || secret.trim().length < 16) {
-      throw new Error("BRIDGE_SECRET is required and must be at least 16 characters")
-    }
+  constructor(private readonly secret?: string) {
+    // secret is optional - env vars are checked first for API keys
   }
 
   load(): CredentialBundle {
     ensureConfigDir()
     const file = credentialFilePath()
-    if (fs.existsSync(file)) {
+    if (fs.existsSync(file) && this.secret) {
       const raw = fs.readFileSync(file, "utf-8")
       const record = JSON.parse(raw) as EncryptedCredentialRecord
       const bundle = decrypt(this.secret, record)
@@ -104,11 +102,14 @@ export class CredentialStore {
       return bundle
     }
 
-    // No file - return empty bundle (env vars will be checked at read time)
+    // No file or no secret - return empty bundle (env vars will be checked at read time)
     return defaultBundle()
   }
 
   save(bundle: CredentialBundle): void {
+    if (!this.secret) {
+      return // Can't save without secret
+    }
     ensureConfigDir()
     const normalized: CredentialBundle = {
       providers: bundle.providers || {},

@@ -385,13 +385,12 @@ async function handleProjectCommand(interaction: Interaction): Promise<Response>
 
 async function processAskInteraction(interaction: Interaction, prompt: string): Promise<void> {
   const channelId = interaction.channel_id
-  const bridgeSecret = process.env.BRIDGE_SECRET
 
-  if (!channelId || !bridgeSecret) {
+  if (!channelId) {
     await sendFollowup(
       interaction.application_id,
       interaction.token,
-      "Missing server configuration for slash workflow (channel/BRIDGE_SECRET).",
+      "Missing channel ID.",
     )
     return
   }
@@ -426,7 +425,7 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
   stateStore.set(state)
 
   const runtime = new OpencodeRuntime(sandboxContext.opencodeBaseUrl, sandboxContext.opencodePassword)
-  const credentials = new CredentialStore(bridgeSecret)
+  const credentials = new CredentialStore()
   const registry = loadProviderRegistryFromEnv()
 
   let responseBuffer = ""
@@ -547,11 +546,6 @@ export default async function handler(request: Request): Promise<Response> {
     return json({ type: 5 })
   }
 
-  const bridgeSecret = process.env.BRIDGE_SECRET
-  if (!bridgeSecret) {
-    return json({ type: 4, data: { content: "BRIDGE_SECRET is not configured." } })
-  }
-
   if (mapped.text === "project" || mapped.text === "project show" || mapped.text === "project select") {
     return handleProjectCommand(interaction)
   }
@@ -562,7 +556,7 @@ export default async function handler(request: Request): Promise<Response> {
 
   const registry = loadProviderRegistryFromEnv()
   const stateStore = new ChannelStateStore()
-  const credentials = new CredentialStore(bridgeSecret)
+  const credentials = new CredentialStore()
 
   const commandResult = handleDiscordCommand(
     mapped.text,

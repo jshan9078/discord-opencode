@@ -92,7 +92,6 @@ See [Source Files](./components/source-files.md) for complete reference.
 | `DISCORD_APPLICATION_ID` | Yes | Discord app ID |
 | `DISCORD_PUBLIC_KEY` | Yes | Signature verification key |
 | `GITHUB_TOKEN` | Yes | For repo/branch selection |
-| `BRIDGE_SECRET` | Yes | Credential encryption key |
 | `OPENCODE_GIST_URL` | No | GitHub gist URL with your `opencode.jsonc` |
 
 No external OpenCode server needed - the bridge creates Vercel Sandboxes and runs OpenCode inside them.

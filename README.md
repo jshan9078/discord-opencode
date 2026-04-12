@@ -55,7 +55,6 @@ In Vercel dashboard, set:
 | `DISCORD_APPLICATION_ID` | Your Discord app ID |
 | `DISCORD_PUBLIC_KEY` | Your Discord public key (hex) |
 | `GITHUB_TOKEN` | GitHub personal access token |
-| `BRIDGE_SECRET` | Random string (16+ chars) for encrypting credentials |
 
 **Provider API keys** (optional):
 - `OPENAI_API_KEY`

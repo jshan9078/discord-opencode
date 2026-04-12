@@ -599,85 +599,6 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
   }
 }
 
-async function handleWebRequest(request: Request): Promise<Response> {
-  try {
-    if (request.method !== "POST") {
-      return json({ error: "Method not allowed" }, 405)
-    }
-
-    const publicKey = process.env.DISCORD_PUBLIC_KEY
-    if (!publicKey) {
-      return json({ error: "DISCORD_PUBLIC_KEY not set" }, 500)
-    }
-
-    const signature = request.headers.get("x-signature-ed25519") || ""
-    const timestamp = request.headers.get("x-signature-timestamp") || ""
-    const body = await request.text()
-
-    if (!verifyDiscordRequest(body, signature, timestamp, publicKey)) {
-      return json({ error: "Invalid request signature" }, 401)
-    }
-
-    const interaction = JSON.parse(body) as Interaction
-
-    if (interaction.type === 1) {
-      return json({ type: 1 })
-    }
-
-    if (interaction.type === 3) {
-      if (interaction.data?.custom_id?.startsWith("tool:")) {
-        return handleToolButtonInteraction(interaction)
-      }
-      if (interaction.data?.custom_id?.startsWith("project:")) {
-        return handleProjectSelectMenu(interaction)
-      }
-      return json({ type: 4, data: { content: "Unknown interaction." } })
-    }
-
-    if (interaction.type !== 2 || !interaction.data) {
-      return json({ type: 4, data: { content: "Unsupported interaction type." } })
-    }
-
-    const mapped = mapInteractionCommandToText(interaction.data)
-
-    if (mapped.type === "prompt") {
-      waitUntil(processAskInteraction(interaction, mapped.text))
-      return json({ type: 5 })
-    }
-
-    if (mapped.text === "project" || mapped.text === "project show" || mapped.text === "project select") {
-      return handleProjectCommand(interaction)
-    }
-
-    if (mapped.text.startsWith("auth-connect") || mapped.text.startsWith("auth connect")) {
-      return handleAuthConnect(interaction, mapped.text)
-    }
-
-    const registry = loadProviderRegistryFromEnv()
-    const stateStore = new ChannelStateStore()
-    const credentials = new CredentialStore()
-
-    const commandResult = handleDiscordCommand(
-      mapped.text,
-      { channelId: interaction.channel_id || "dm" },
-      stateStore,
-      registry,
-      credentials,
-    )
-
-    const content = commandResult.message || "Done."
-    return json({ type: 4, data: { content } })
-  } catch (error) {
-    console.error("Discord interaction handler failed:", error)
-    return json({
-      type: 4,
-      data: {
-        content: `Handler error: ${error instanceof Error ? error.message : "Unknown error"}`,
-      },
-    })
-  }
-}
-
 export default async function handler(
   req: {
     method?: string
@@ -693,29 +614,96 @@ export default async function handler(
     end(body?: string): void
   },
 ): Promise<void> {
-  const body = await readNodeRequestBody(req)
-  const headers = new Headers()
+  try {
+    if (req.method !== "POST") {
+      await sendNodeResponse(res, json({ error: "Method not allowed" }, 405))
+      return
+    }
 
-  for (const [key, value] of Object.entries(req.headers || {})) {
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        headers.append(key, item)
+    const publicKey = process.env.DISCORD_PUBLIC_KEY
+    if (!publicKey) {
+      await sendNodeResponse(res, json({ error: "DISCORD_PUBLIC_KEY not set" }, 500))
+      return
+    }
+
+    const rawBody = await readNodeRequestBody(req)
+    const body = rawBody.toString("utf-8")
+    const signatureHeader = req.headers["x-signature-ed25519"]
+    const timestampHeader = req.headers["x-signature-timestamp"]
+    const signature = Array.isArray(signatureHeader) ? signatureHeader[0] || "" : signatureHeader || ""
+    const timestamp = Array.isArray(timestampHeader) ? timestampHeader[0] || "" : timestampHeader || ""
+
+    if (!verifyDiscordRequest(body, signature, timestamp, publicKey)) {
+      await sendNodeResponse(res, json({ error: "Invalid request signature" }, 401))
+      return
+    }
+
+    const interaction = JSON.parse(body) as Interaction
+
+    if (interaction.type === 1) {
+      await sendNodeResponse(res, json({ type: 1 }))
+      return
+    }
+
+    if (interaction.type === 3) {
+      if (interaction.data?.custom_id?.startsWith("tool:")) {
+        await sendNodeResponse(res, await handleToolButtonInteraction(interaction))
+        return
       }
-      continue
+      if (interaction.data?.custom_id?.startsWith("project:")) {
+        await sendNodeResponse(res, await handleProjectSelectMenu(interaction))
+        return
+      }
+      await sendNodeResponse(res, json({ type: 4, data: { content: "Unknown interaction." } }))
+      return
     }
-    if (value !== undefined) {
-      headers.set(key, value)
+
+    if (interaction.type !== 2 || !interaction.data) {
+      await sendNodeResponse(res, json({ type: 4, data: { content: "Unsupported interaction type." } }))
+      return
     }
+
+    const mapped = mapInteractionCommandToText(interaction.data)
+
+    if (mapped.type === "prompt") {
+      waitUntil(processAskInteraction(interaction, mapped.text))
+      await sendNodeResponse(res, json({ type: 5 }))
+      return
+    }
+
+    if (mapped.text === "project" || mapped.text === "project show" || mapped.text === "project select") {
+      await sendNodeResponse(res, await handleProjectCommand(interaction))
+      return
+    }
+
+    if (mapped.text.startsWith("auth-connect") || mapped.text.startsWith("auth connect")) {
+      await sendNodeResponse(res, await handleAuthConnect(interaction, mapped.text))
+      return
+    }
+
+    const registry = loadProviderRegistryFromEnv()
+    const stateStore = new ChannelStateStore()
+    const credentials = new CredentialStore()
+
+    const commandResult = handleDiscordCommand(
+      mapped.text,
+      { channelId: interaction.channel_id || "dm" },
+      stateStore,
+      registry,
+      credentials,
+    )
+
+    await sendNodeResponse(res, json({ type: 4, data: { content: commandResult.message || "Done." } }))
+  } catch (error) {
+    console.error("Discord interaction handler failed:", error)
+    await sendNodeResponse(
+      res,
+      json({
+        type: 4,
+        data: {
+          content: `Handler error: ${error instanceof Error ? error.message : "Unknown error"}`,
+        },
+      }),
+    )
   }
-
-  const host = headers.get("host") || "localhost"
-  const bodyInput = body.length > 0 ? new Uint8Array(body) : undefined
-  const request = new Request(`https://${host}${req.url || "/api/discord/interactions"}`, {
-    method: req.method || "GET",
-    headers,
-    body: bodyInput,
-  })
-
-  const response = await handleWebRequest(request)
-  await sendNodeResponse(res, response)
 }

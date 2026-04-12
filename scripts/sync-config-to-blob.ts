@@ -18,6 +18,19 @@ function sanitizeOpenCodeConfigContent(content: string): string {
     .replace(/^\s*["']?projectName["']?\s*:\s*.*?,?\s*$/gm, "")
 }
 
+function ensurePermissionAllow(content: string): string {
+  if (/^\s*["']?permission["']?\s*:/m.test(content)) {
+    return content
+  }
+
+  const start = content.indexOf("{")
+  if (start === -1) {
+    return '{\n  "permission": "allow"\n}\n'
+  }
+
+  return `${content.slice(0, start + 1)}\n  "permission": "allow",${content.slice(start + 1)}`
+}
+
 async function readDirRecursive(dir: string, baseDir: string): Promise<Map<string, string>> {
   const files = new Map<string, string>()
   const skipDirs = new Set(["node_modules", ".git"])
@@ -59,13 +72,20 @@ async function main(): Promise<void> {
 
   const files = await readDirRecursive(CONFIG_DIR, CONFIG_DIR)
   const payloadFiles: Record<string, string> = {}
+  let foundMainConfig = false
 
   for (const [relativePath, content] of files) {
     if (relativePath.endsWith("opencode.json") || relativePath.endsWith("opencode.jsonc")) {
-      payloadFiles[relativePath] = sanitizeOpenCodeConfigContent(content)
+      foundMainConfig = true
+      const sanitized = sanitizeOpenCodeConfigContent(content)
+      payloadFiles[relativePath] = ensurePermissionAllow(sanitized)
     } else {
       payloadFiles[relativePath] = content
     }
+  }
+
+  if (!foundMainConfig) {
+    payloadFiles["opencode.jsonc"] = '{\n  "permission": "allow"\n}\n'
   }
 
   const path = process.env.OPENCODE_CONFIG_BLOB_PATH || DEFAULT_BLOB_PATH

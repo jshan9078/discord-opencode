@@ -8,6 +8,7 @@ import { getConfigDir, getConfigPath } from "./storage-paths.js"
 export interface ChannelState {
   channelId: string
   sandboxId?: string
+  opencodePassword?: string
   activeProviderId?: string
   activeModelId?: string
   sessionByProfile?: Record<string, string>

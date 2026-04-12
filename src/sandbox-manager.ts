@@ -18,6 +18,8 @@ export interface OAuthStartResult {
   userCode?: string
   instructions?: string
   deviceAuthId?: string
+  sandboxId?: string
+  opencodePassword?: string
 }
 
 export interface OAuthCompleteResult {
@@ -60,6 +62,7 @@ export class SandboxManager {
     sandboxIdFromState: string | undefined,
     repoUrl?: string,
     branch = "main",
+    opencodePasswordFromState?: string,
   ): Promise<SandboxContext> {
     const cached = this.cache.get(channelId)
     if (cached) {
@@ -84,6 +87,29 @@ export class SandboxManager {
       try {
         sandbox = await Sandbox.get({ sandboxId: sandboxIdFromState })
         console.log(`[SandboxManager] Resumed sandbox: ${sandbox.sandboxId}`)
+
+        if (opencodePasswordFromState) {
+          const resumedContext: SandboxContext = {
+            sandboxId: sandbox.sandboxId,
+            opencodeBaseUrl: this.getOpenCodeBaseUrl(sandbox),
+            opencodePassword: opencodePasswordFromState,
+          }
+
+          const healthy = await fetch(`${resumedContext.opencodeBaseUrl}/global/health`, {
+            method: "GET",
+            headers: {
+              Authorization: `Basic ${Buffer.from(`opencode:${resumedContext.opencodePassword}`).toString("base64")}`,
+            },
+            signal: AbortSignal.timeout(3000),
+          })
+            .then((response) => response.ok)
+            .catch(() => false)
+
+          if (healthy) {
+            this.cache.set(channelId, resumedContext)
+            return resumedContext
+          }
+        }
       } catch (error) {
         console.log(`[SandboxManager] Could not resume sandbox ${sandboxIdFromState}, creating new`)
         sandbox = await this.createSandbox(channelId, repoUrl, branch)
@@ -370,8 +396,14 @@ export class SandboxManager {
     }
   }
 
-  async startOAuth(channelId: string, providerId: string, method?: number): Promise<OAuthStartResult> {
-    const context = await this.getOrCreate(channelId, undefined)
+  async startOAuth(
+    channelId: string,
+    providerId: string,
+    method?: number,
+    sandboxIdFromState?: string,
+    opencodePasswordFromState?: string,
+  ): Promise<OAuthStartResult> {
+    const context = await this.getOrCreate(channelId, sandboxIdFromState, undefined, "main", opencodePasswordFromState)
     const url = `${context.opencodeBaseUrl}/provider/${providerId}/oauth/authorize`
     const resolvedMethod = await this.resolveOAuthMethodIndex(context, providerId, method)
     if (resolvedMethod === undefined) {
@@ -439,6 +471,8 @@ export class SandboxManager {
       userCode: userCodeValue,
       instructions: result.instructions,
       deviceAuthId: deviceAuthIdValue,
+      sandboxId: context.sandboxId,
+      opencodePassword: context.opencodePassword,
     }
   }
 
@@ -447,8 +481,10 @@ export class SandboxManager {
     providerId: string,
     method: number | undefined,
     deviceAuthId?: string,
+    sandboxIdFromState?: string,
+    opencodePasswordFromState?: string,
   ): Promise<OAuthCompleteResult> {
-    const context = await this.getOrCreate(channelId, undefined)
+    const context = await this.getOrCreate(channelId, sandboxIdFromState, undefined, "main", opencodePasswordFromState)
     const resolvedMethod = await this.resolveOAuthMethodIndex(context, providerId, method)
     if (resolvedMethod === undefined) {
       return {

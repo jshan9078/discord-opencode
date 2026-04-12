@@ -14,6 +14,8 @@ type OAuthStartResult = {
   userCode?: string
   instructions?: string
   deviceAuthId?: string
+  sandboxId?: string
+  opencodePassword?: string
 }
 
 type OAuthCompleteResult = {
@@ -695,19 +697,27 @@ async function handleAuthConnect(interaction: Interaction, text: string): Promis
   const sandboxManager = getSandboxManager()
   const oauthStore = new OAuthTokenStore()
 
-  if (state.pendingOAuth?.providerId === providerId && state.pendingOAuth?.deviceAuthId) {
+  const pendingFromBlob = await oauthStore.getPendingOAuth(userId, providerId)
+  const pendingOAuth = state.pendingOAuth?.providerId === providerId
+    ? state.pendingOAuth
+    : pendingFromBlob
+
+  if (pendingOAuth?.providerId === providerId && pendingOAuth?.deviceAuthId) {
     try {
       const completeResult: OAuthCompleteResult = await sandboxManager.completeOAuth(
         channelId,
         providerId,
         undefined,
-        state.pendingOAuth.deviceAuthId,
+        pendingOAuth.deviceAuthId,
+        pendingFromBlob?.sandboxId || state.sandboxId,
+        pendingFromBlob?.opencodePassword || state.opencodePassword,
       )
 
       if (completeResult.success) {
         if (completeResult.tokens) {
           await oauthStore.setUserProviderAuth(userId, providerId, completeResult.tokens)
         }
+        await oauthStore.clearPendingOAuth(userId, providerId)
         state.pendingOAuth = undefined
         stateStore.set(state)
 
@@ -738,7 +748,19 @@ async function handleAuthConnect(interaction: Interaction, text: string): Promis
   }
 
   try {
-    const oauthResult: OAuthStartResult = await sandboxManager.startOAuth(channelId, providerId)
+    const oauthResult: OAuthStartResult = await sandboxManager.startOAuth(
+      channelId,
+      providerId,
+      undefined,
+      state.sandboxId,
+      state.opencodePassword,
+    )
+    if (oauthResult.sandboxId) {
+      state.sandboxId = oauthResult.sandboxId
+    }
+    if (oauthResult.opencodePassword) {
+      state.opencodePassword = oauthResult.opencodePassword
+    }
 
     if (oauthResult.success === false || !oauthResult.url) {
       return json({
@@ -755,6 +777,15 @@ async function handleAuthConnect(interaction: Interaction, text: string): Promis
         deviceAuthId: oauthResult.deviceAuthId,
         timestamp: Date.now(),
       }
+      stateStore.set(state)
+      await oauthStore.setPendingOAuth(userId, providerId, {
+        providerId,
+        deviceAuthId: oauthResult.deviceAuthId,
+        sandboxId: oauthResult.sandboxId,
+        opencodePassword: oauthResult.opencodePassword,
+        timestamp: Date.now(),
+      })
+    } else {
       stateStore.set(state)
     }
 
@@ -987,7 +1018,13 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
     const oldSandboxId = conversationState.sandboxId
 
     try {
-      sandboxContext = await sandboxManager.getOrCreate(conversationId, conversationState.sandboxId, repoUrl, branch)
+      sandboxContext = await sandboxManager.getOrCreate(
+        conversationId,
+        conversationState.sandboxId,
+        repoUrl,
+        branch,
+        conversationState.opencodePassword,
+      )
     } catch (error) {
       console.error("Failed to get/create sandbox:", error)
       await sendFollowup(
@@ -1000,6 +1037,7 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
 
   // Update state with sandbox ID for future resumption
     conversationState.sandboxId = sandboxContext.sandboxId
+    conversationState.opencodePassword = sandboxContext.opencodePassword
     stateStore.set(conversationState)
 
     const runtime = new OpencodeRuntime(sandboxContext.opencodeBaseUrl, sandboxContext.opencodePassword)

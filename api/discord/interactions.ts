@@ -542,6 +542,29 @@ function stripPromptEcho(text: string, prompt: string): string {
   return remainder.replace(/^[\s:,-]+/, "")
 }
 
+function stripInjectedPromptScaffolding(text: string, prompt: string, runtimeContext?: string): string {
+  let next = text.trimStart()
+
+  const removePrefix = (prefix: string): void => {
+    const normalized = prefix.trim()
+    if (!normalized) {
+      return
+    }
+    if (next.toLowerCase().startsWith(normalized.toLowerCase())) {
+      next = next.slice(normalized.length).replace(/^[\s:,-]+/, "")
+    }
+  }
+
+  if (runtimeContext) {
+    removePrefix(runtimeContext)
+  }
+
+  next = next.replace(/^current user request:\s*/i, "")
+  removePrefix(prompt)
+
+  return next
+}
+
 function stripInternalReasoningLeak(text: string): string {
   const patterns = [
     /^the user is asking[\s\S]{0,500}?let me provide this information\.?\s*/i,
@@ -1347,7 +1370,9 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
     }
 
     const flushAssistantStream = async (force = false): Promise<void> => {
-      const sanitized = stripInternalReasoningLeak(stripPromptEcho(responseBuffer, prompt))
+      const sanitized = stripInternalReasoningLeak(
+        stripInjectedPromptScaffolding(responseBuffer, prompt, runtimeContext),
+      )
       const pending = sanitized.slice(streamedLength)
       if (!pending) {
         return
@@ -1532,7 +1557,9 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
 
     await flushAssistantStream(true)
 
-    const text = stripInternalReasoningLeak(stripPromptEcho(responseBuffer.trim(), prompt))
+    const text = stripInternalReasoningLeak(
+      stripInjectedPromptScaffolding(responseBuffer.trim(), prompt, runtimeContext),
+    )
     if (result.hadError) {
     const helpMsg = "\n\nTo switch models, use `/use-provider` and `/use-model`"
     if (text && streamedLength === 0) {

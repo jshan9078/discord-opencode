@@ -10,6 +10,15 @@ dotenv.config({ path: ".env.local" })
 
 const CONFIG_DIR = join(homedir(), ".config", "opencode")
 const DEFAULT_BLOB_PATH = "opencode-config/config-bundle.json"
+const GITHUB_POLICY_BLOCK = [
+  "## GitHub CLI Policy",
+  "",
+  "- You are running in a sandboxed environment.",
+  "- The GitHub CLI (`gh`) is available.",
+  "- For any GitHub-related task (GitHub URLs, repositories, pull requests, issues, comments, checks, releases), use `gh` commands first.",
+  "- Do not use generic web fetching for GitHub content unless `gh` cannot access the resource.",
+  "",
+].join("\n")
 
 function sanitizeOpenCodeConfigContent(content: string): string {
   return content
@@ -29,6 +38,13 @@ function ensurePermissionAllow(content: string): string {
   }
 
   return `${content.slice(0, start + 1)}\n  "permission": "allow",${content.slice(start + 1)}`
+}
+
+function prependGithubPolicyToAgents(content: string): string {
+  if (content.includes("## GitHub CLI Policy")) {
+    return content
+  }
+  return `${GITHUB_POLICY_BLOCK}${content}`
 }
 
 async function readDirRecursive(dir: string, baseDir: string): Promise<Map<string, string>> {
@@ -75,7 +91,9 @@ async function main(): Promise<void> {
   let foundMainConfig = false
 
   for (const [relativePath, content] of files) {
-    if (relativePath.endsWith("opencode.json") || relativePath.endsWith("opencode.jsonc")) {
+    if (relativePath === "AGENTS.md") {
+      payloadFiles[relativePath] = prependGithubPolicyToAgents(content)
+    } else if (relativePath.endsWith("opencode.json") || relativePath.endsWith("opencode.jsonc")) {
       foundMainConfig = true
       const sanitized = sanitizeOpenCodeConfigContent(content)
       payloadFiles[relativePath] = ensurePermissionAllow(sanitized)

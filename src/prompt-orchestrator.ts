@@ -9,14 +9,6 @@ import { resolveSessionForActiveProfile } from "./session-manager.js"
 import { relaySessionEvents, type EventRelaySink } from "./event-relay.js"
 import type { ProviderRegistry } from "./provider-registry.js"
 import type { OpencodeRuntime } from "./opencode-runtime.js"
-import { ChannelStateStore as ChannelStoreClass } from "./channel-state-store.js"
-
-const RUNTIME_POLICY_INSTRUCTIONS = [
-  "Runtime policy:",
-  "- The GitHub CLI (gh) is available.",
-  "- For any GitHub-related task (GitHub URLs, repositories, pull requests, issues, comments, checks, releases), use gh commands first.",
-  "- Do not use generic web fetching for GitHub content unless gh cannot access the resource.",
-].join("\n")
 
 export interface RuntimeClientAdapter {
   auth: {
@@ -146,22 +138,16 @@ export async function executePromptForChannel(
     maxIdleMs: 45_000,
     maxTotalMs: 10 * 60_000,
   })
-  const promptWithPolicy = [
-    RUNTIME_POLICY_INSTRUCTIONS,
-    "",
-    "Current user request:",
-    prompt,
-  ].join("\n")
-
   const finalPrompt = options.recoveryContext
     ? [
         "Context recovery note: Use the following Discord channel history summary to reconstruct prior intent. Treat it as approximate context and continue naturally.",
         "",
         options.recoveryContext,
         "",
-        promptWithPolicy,
+        "Current user request:",
+        prompt,
       ].join("\n")
-    : promptWithPolicy
+    : prompt
 
   await runtime.promptAsync(sessionId, finalPrompt, {
     providerId,

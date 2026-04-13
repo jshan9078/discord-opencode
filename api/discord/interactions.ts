@@ -564,8 +564,29 @@ async function sendFinalAskResponse(
 }
 
 function encodeToolPayload(kind: string, toolName: string, data: string): string {
-  const payload = JSON.stringify({ k: kind, t: toolName, d: data })
-  return Buffer.from(payload).toString("base64url").slice(0, 100)
+  const maxEncodedLength = 95
+  let safeTool = toolName
+  let safeData = data
+
+  while (true) {
+    const payload = JSON.stringify({ k: kind, t: safeTool, d: safeData })
+    const encoded = Buffer.from(payload).toString("base64url")
+    if (encoded.length <= maxEncodedLength) {
+      return encoded
+    }
+
+    if (safeData.length > 0) {
+      safeData = safeData.slice(0, Math.max(0, Math.floor(safeData.length * 0.6)))
+      continue
+    }
+
+    if (safeTool.length > 12) {
+      safeTool = safeTool.slice(0, safeTool.length - 4)
+      continue
+    }
+
+    return Buffer.from(JSON.stringify({ k: kind, t: kind, d: "" })).toString("base64url")
+  }
 }
 
 function decodeToolPayload(encoded: string): { kind: string; toolName: string; data: string } | null {
@@ -585,13 +606,21 @@ function buildToolButtons(toolName: string, requestData: string, resultData: str
   const reqEncoded = encodeToolPayload("req", toolName, requestData)
   const resEncoded = encodeToolPayload("res", toolName, resultData)
   const jsonEncoded = encodeToolPayload("json", toolName, requestData || resultData)
+  const reqId = `tool:${reqEncoded}`
+  const resId = `tool:${resEncoded}`
+  const jsonId = `tool:${jsonEncoded}`
+
+  if (reqId.length > 100 || resId.length > 100 || jsonId.length > 100) {
+    return []
+  }
+
   return [
     {
       type: 1,
       components: [
-        { type: 2, custom_id: `tool:${reqEncoded}`, label: "Request", style: 2 },
-        { type: 2, custom_id: `tool:${resEncoded}`, label: "Result", style: 2 },
-        { type: 2, custom_id: `tool:${jsonEncoded}`, label: "JSON", style: 2 },
+        { type: 2, custom_id: reqId, label: "Request", style: 2 },
+        { type: 2, custom_id: resId, label: "Result", style: 2 },
+        { type: 2, custom_id: jsonId, label: "JSON", style: 2 },
       ],
     },
   ]
@@ -1237,22 +1266,24 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
         toolEvents += 1
         const requestData = payload.requestSummary || ""
         const resultData = ""
+        const components = buildToolButtons(payload.toolName, requestData, resultData)
         await sendFollowup(
           interaction.application_id,
           interaction.token,
           `> ⏳ Tool: ${payload.toolName}`,
-          buildToolButtons(payload.toolName, requestData, resultData),
+          components.length > 0 ? components : undefined,
           threadIdForFollowups,
         )
       },
       onToolResult: async (payload) => {
         const requestData = ""
         const resultData = payload.resultSummary || ""
+        const components = buildToolButtons(payload.toolName, requestData, resultData)
         await sendFollowup(
           interaction.application_id,
           interaction.token,
           `> ✅ Tool: ${payload.toolName}`,
-          buildToolButtons(payload.toolName, requestData, resultData),
+          components.length > 0 ? components : undefined,
           threadIdForFollowups,
         )
       },

@@ -120,4 +120,83 @@ describe("isTerminalSessionEvent", () => {
     expect(result.completed).toBe(true)
     expect(deltas.join("")).toBe("public answer")
   })
+
+  it("emits tool request and result from tool part state transitions", async () => {
+    async function* stream() {
+      yield {
+        type: "message.part.updated",
+        sessionID: "s1",
+        properties: {
+          sessionID: "s1",
+          part: {
+            id: "tool-1",
+            sessionID: "s1",
+            messageID: "m1",
+            type: "tool",
+            callID: "call-1",
+            tool: "bash",
+            state: { status: "running", input: { command: "pwd" }, time: { start: Date.now() } },
+          },
+          time: Date.now(),
+        },
+      }
+      yield {
+        type: "message.part.updated",
+        sessionID: "s1",
+        properties: {
+          sessionID: "s1",
+          part: {
+            id: "tool-1",
+            sessionID: "s1",
+            messageID: "m1",
+            type: "tool",
+            callID: "call-1",
+            tool: "bash",
+            state: {
+              status: "completed",
+              input: { command: "pwd" },
+              output: "/tmp",
+              title: "Done",
+              metadata: {},
+              time: { start: Date.now(), end: Date.now() },
+            },
+          },
+          time: Date.now(),
+        },
+      }
+      yield {
+        type: "session.idle",
+        sessionID: "s1",
+        properties: {},
+      }
+    }
+
+    const requests: string[] = []
+    const results: string[] = []
+
+    await relaySessionEvents(
+      {
+        event: {
+          subscribe: () => ({ stream: stream() }),
+        },
+      },
+      {
+        onTextDelta: async () => {},
+        onToolActivity: async () => {},
+        onToolRequest: async (payload) => {
+          requests.push(payload.toolName)
+        },
+        onToolResult: async (payload) => {
+          results.push(payload.toolName)
+        },
+        onQuestion: async () => {},
+        onPermission: async () => {},
+        onError: async () => {},
+      },
+      "s1",
+    )
+
+    expect(requests).toEqual(["bash"])
+    expect(results).toEqual(["bash"])
+  })
 })

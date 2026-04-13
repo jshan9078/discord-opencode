@@ -102,6 +102,10 @@ function asNumber(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" ? value as Record<string, unknown> : undefined
+}
+
 function asUsage(value: unknown): EventRelayResult["usage"] | undefined {
   if (!value || typeof value !== "object") {
     return undefined
@@ -261,6 +265,7 @@ export async function relaySessionEvents(
   const lastTextByPart = new Map<string, string>()
   const partTypeById = new Map<string, string>()
   const pendingDeltaByPart = new Map<string, string[]>()
+  const toolStatusByPart = new Map<string, string>()
 
   try {
     for await (const event of events.stream) {
@@ -356,47 +361,66 @@ export async function relaySessionEvents(
 
         const tool = asText(
           firstDefined(
+            part?.tool,
             event.properties?.toolName,
             event.properties?.name,
             event.properties?.tool,
           ),
         )
         if (tool) {
-          await sink.onToolActivity(`Running tool: ${tool}`)
-
-          const requestRaw = firstDefined(
-            event.properties?.input,
-            event.properties?.args,
-            event.properties?.arguments,
-            event.properties?.command,
-          )
-          const resultRaw = firstDefined(
-            event.properties?.result,
-            event.properties?.output,
-            event.properties?.toolResult,
-          )
+          const toolPartId = asText(part?.id)
           const toolCallId = asText(
             firstDefined(
+              part?.callID,
               event.properties?.toolCallId,
               event.properties?.callId,
               event.properties?.id,
             ),
           )
+          const state = asRecord(part?.state)
+          const status = asText(state?.status)
+          const previousStatus = toolPartId ? toolStatusByPart.get(toolPartId) : undefined
 
-          if (resultRaw !== undefined && sink.onToolResult) {
-            await sink.onToolResult({
-              toolCallId: toolCallId || undefined,
-              toolName: tool,
-              resultSummary: toSummary(resultRaw),
-              resultRaw,
-            })
-          } else if (sink.onToolRequest) {
-            await sink.onToolRequest({
-              toolCallId: toolCallId || undefined,
-              toolName: tool,
-              requestSummary: toSummary(requestRaw),
-              requestRaw,
-            })
+          if (toolPartId && status) {
+            toolStatusByPart.set(toolPartId, status)
+          }
+
+          if (status === "pending" || status === "running") {
+            if (status !== previousStatus) {
+              await sink.onToolActivity(`Running tool: ${tool}`)
+              if (sink.onToolRequest) {
+                const requestRaw = firstDefined(
+                  state?.input,
+                  state?.raw,
+                  event.properties?.input,
+                  event.properties?.args,
+                  event.properties?.arguments,
+                  event.properties?.command,
+                )
+                await sink.onToolRequest({
+                  toolCallId: toolCallId || undefined,
+                  toolName: tool,
+                  requestSummary: toSummary(requestRaw),
+                  requestRaw,
+                })
+              }
+            }
+          } else if (status === "completed" || status === "error") {
+            if (status !== previousStatus) {
+              if (sink.onToolResult) {
+                const resultRaw = status === "completed"
+                  ? firstDefined(state?.output, state?.title, event.properties?.result, event.properties?.output)
+                  : firstDefined(state?.error, event.properties?.error)
+                await sink.onToolResult({
+                  toolCallId: toolCallId || undefined,
+                  toolName: tool,
+                  resultSummary: toSummary(resultRaw),
+                  resultRaw,
+                })
+              }
+            }
+          } else {
+            await sink.onToolActivity(`Running tool: ${tool}`)
           }
         }
         continue

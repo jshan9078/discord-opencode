@@ -73,6 +73,7 @@ export async function executePromptForChannel(
   | {
       ok: true
       hadError?: boolean
+      filesEdited?: string[]
       usage?: {
         providerId: string
         modelId: string
@@ -168,6 +169,7 @@ export async function executePromptForChannel(
   return {
     ok: true,
     hadError: relayResult.hadError,
+    filesEdited: relayResult.filesEdited,
     usage: relayResult.usage,
   }
 }

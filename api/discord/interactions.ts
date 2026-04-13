@@ -204,7 +204,11 @@ async function sendFollowup(
   return await parseMessageId(response)
 }
 
-async function editThreadMessage(threadId: string, messageId: string, content: string): Promise<boolean> {
+async function editThreadMessage(
+  threadId: string,
+  messageId: string,
+  payload: { content?: string; embeds?: unknown[]; components?: unknown[] },
+): Promise<boolean> {
   const token = process.env.DISCORD_BOT_TOKEN
   if (!token) {
     return false
@@ -216,7 +220,7 @@ async function editThreadMessage(threadId: string, messageId: string, content: s
       "Content-Type": "application/json",
       Authorization: `Bot ${token}`,
     },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify(payload),
   }).catch(() => null)
 
   return Boolean(response?.ok)
@@ -585,23 +589,42 @@ async function sendFinalAskResponse(
   interaction: Interaction,
   threadId: string | undefined,
   text: string,
-  usageFooter?: string,
 ): Promise<void> {
-  const embed: Record<string, unknown> = {
-    description: clipEmbedDescription(text || "Done."),
-  }
-  if (usageFooter) {
-    embed.footer = { text: usageFooter }
+  const clipped = text.length > 1900 ? `${text.slice(0, 1899)}...` : text
+  await sendFollowup(interaction.application_id, interaction.token, clipped || "Done.", undefined, threadId)
+}
+
+function parseTodoItems(value: unknown): Array<{ content: string; status: string }> {
+  if (!value) {
+    return []
   }
 
-  await sendFollowup(
-    interaction.application_id,
-    interaction.token,
-    "",
-    undefined,
-    threadId,
-    [embed],
-  )
+  let source: unknown = value
+  if (typeof source === "string") {
+    try {
+      source = JSON.parse(source)
+    } catch {
+      return []
+    }
+  }
+
+  if (Array.isArray(source)) {
+    return source
+      .map((item) => ({
+        content: typeof (item as { content?: unknown }).content === "string" ? (item as { content: string }).content : "",
+        status: typeof (item as { status?: unknown }).status === "string" ? (item as { status: string }).status : "",
+      }))
+      .filter((item) => item.content && item.status)
+  }
+
+  if (source && typeof source === "object") {
+    const obj = source as { todos?: unknown }
+    if (Array.isArray(obj.todos)) {
+      return parseTodoItems(obj.todos)
+    }
+  }
+
+  return []
 }
 
 function encodeToolPayload(kind: string, toolName: string, data: string): string {
@@ -1257,13 +1280,19 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
       : undefined
 
     let responseBuffer = ""
+    let streamedLength = 0
+    let assistantMessageId: string | undefined
+    let assistantMessageText = ""
+    let lastAssistantFlushAt = 0
     const reasoningBufferByPart = new Map<string, string>()
     const reasoningMessageIdByPart = new Map<string, string>()
     const lastReasoningSentLengthByPart = new Map<string, number>()
     let toolEvents = 0
     const toolMessageByCall = new Map<string, string>()
     let toolSequence = 0
+    let todoProgressMessageId: string | undefined
     const threadIdForFollowups = effectiveThreadId
+    const ASSISTANT_MESSAGE_LIMIT = 1900
 
     const flushReasoning = async (partId: string, force = false): Promise<void> => {
       const trimmed = (reasoningBufferByPart.get(partId) || "").trim()
@@ -1281,7 +1310,7 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
       const reasoningMessageId = reasoningMessageIdByPart.get(partId)
 
       if (threadIdForFollowups && reasoningMessageId) {
-        const updated = await editThreadMessage(threadIdForFollowups, reasoningMessageId, content)
+        const updated = await editThreadMessage(threadIdForFollowups, reasoningMessageId, { content })
         if (updated) {
           lastReasoningSentLengthByPart.set(partId, trimmed.length)
           return
@@ -1301,6 +1330,98 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
       lastReasoningSentLengthByPart.set(partId, trimmed.length)
     }
 
+    const flushAssistantStream = async (force = false): Promise<void> => {
+      const sanitized = stripInternalReasoningLeak(stripPromptEcho(responseBuffer, prompt))
+      const pending = sanitized.slice(streamedLength)
+      if (!pending) {
+        return
+      }
+
+      const now = Date.now()
+      if (!force && pending.length < 70 && now - lastAssistantFlushAt < 700) {
+        return
+      }
+
+      let remaining = pending
+      while (remaining.length > 0) {
+        const available = ASSISTANT_MESSAGE_LIMIT - assistantMessageText.length
+        if (assistantMessageId && available > 0 && threadIdForFollowups) {
+          const chunk = remaining.slice(0, available)
+          const nextText = assistantMessageText + chunk
+          const updated = await editThreadMessage(threadIdForFollowups, assistantMessageId, { content: nextText })
+          if (updated) {
+            assistantMessageText = nextText
+            streamedLength += chunk.length
+            remaining = remaining.slice(chunk.length)
+            lastAssistantFlushAt = now
+            continue
+          }
+          assistantMessageId = undefined
+          assistantMessageText = ""
+        }
+
+        const chunk = remaining.slice(0, ASSISTANT_MESSAGE_LIMIT)
+        const messageId = await sendFollowup(
+          interaction.application_id,
+          interaction.token,
+          chunk,
+          undefined,
+          threadIdForFollowups,
+        )
+        assistantMessageId = messageId
+        assistantMessageText = chunk
+        streamedLength += chunk.length
+        remaining = remaining.slice(chunk.length)
+        lastAssistantFlushAt = now
+      }
+    }
+
+    const updateTodoProgressEmbed = async (raw: unknown): Promise<void> => {
+      const todos = parseTodoItems(raw)
+      if (todos.length === 0) {
+        return
+      }
+
+      const counts = { pending: 0, in_progress: 0, completed: 0, cancelled: 0 }
+      for (const todo of todos) {
+        if (todo.status in counts) {
+          counts[todo.status as keyof typeof counts] += 1
+        }
+      }
+
+      const active = todos.filter((todo) => todo.status === "in_progress").slice(0, 3)
+      const embed = {
+        title: "Todo Progress",
+        description: [
+          `Pending: ${counts.pending} | In Progress: ${counts.in_progress}`,
+          `Completed: ${counts.completed} | Cancelled: ${counts.cancelled}`,
+          ...(active.length > 0 ? ["", "Active:", ...active.map((todo) => `- ${todo.content}`)] : []),
+        ].join("\n"),
+      }
+
+      if (threadIdForFollowups && todoProgressMessageId) {
+        const updated = await editThreadMessage(threadIdForFollowups, todoProgressMessageId, {
+          content: "",
+          embeds: [embed],
+        })
+        if (updated) {
+          return
+        }
+      }
+
+      const messageId = await sendFollowup(
+        interaction.application_id,
+        interaction.token,
+        "",
+        undefined,
+        threadIdForFollowups,
+        [embed],
+      )
+      if (messageId) {
+        todoProgressMessageId = messageId
+      }
+    }
+
     const result = await executePromptForChannel(
       runtime,
       registry,
@@ -1315,6 +1436,7 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
     {
       onTextDelta: async (text) => {
         responseBuffer += text
+        await flushAssistantStream(false)
       },
       onReasoningDelta: async ({ partId, text, completed }) => {
         const key = partId || "unknown"
@@ -1337,6 +1459,9 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
         if (messageId) {
           toolMessageByCall.set(callKey, messageId)
         }
+        if (payload.toolName === "todowrite") {
+          await updateTodoProgressEmbed(payload.requestRaw)
+        }
       },
       onToolResult: async (payload) => {
         const callKey = payload.toolCallId || `${payload.toolName}:${toolSequence}`
@@ -1345,12 +1470,18 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
         const content = `> ${doneIcon} Tool: ${payload.toolName}${preview}`
         const existingMessageId = toolMessageByCall.get(callKey)
         if (threadIdForFollowups && existingMessageId) {
-          const updated = await editThreadMessage(threadIdForFollowups, existingMessageId, content)
+          const updated = await editThreadMessage(threadIdForFollowups, existingMessageId, { content })
           if (updated) {
+            if (payload.toolName === "todowrite") {
+              await updateTodoProgressEmbed(payload.resultRaw)
+            }
             return
           }
         }
         await sendFollowup(interaction.application_id, interaction.token, content, undefined, threadIdForFollowups)
+        if (payload.toolName === "todowrite") {
+          await updateTodoProgressEmbed(payload.resultRaw)
+        }
       },
       onQuestion: async (questionMessage: string) => {
         await sendFollowup(interaction.application_id, interaction.token, `> ${questionMessage}`, undefined, threadIdForFollowups)
@@ -1374,7 +1505,7 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
     }
 
     const usageFooter = formatUsageFooter(
-      result.hadError ? result.usage : result.usage,
+      result.usage,
       registry.getModel(selection.providerId, selection.modelId)?.contextWindow,
     )
 
@@ -1382,20 +1513,48 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
       await flushReasoning(partId, true)
     }
 
+    await flushAssistantStream(true)
+
     const text = stripInternalReasoningLeak(stripPromptEcho(responseBuffer.trim(), prompt))
     if (result.hadError) {
     const helpMsg = "\n\nTo switch models, use `/use-provider` and `/use-model`"
-    if (text) {
-      await sendFinalAskResponse(interaction, threadIdForFollowups, text + helpMsg, usageFooter)
-    } else {
-      await sendFinalAskResponse(interaction, threadIdForFollowups, `Error occurred.${helpMsg}`, usageFooter)
-    }
+    if (text && streamedLength === 0) {
+      await sendFinalAskResponse(interaction, threadIdForFollowups, text)
+      await sendFollowup(interaction.application_id, interaction.token, helpMsg.trim(), undefined, threadIdForFollowups)
     } else if (text) {
-      await sendFinalAskResponse(interaction, threadIdForFollowups, text, usageFooter)
+      await sendFollowup(interaction.application_id, interaction.token, helpMsg.trim(), undefined, threadIdForFollowups)
     } else {
-      const suffix = toolEvents > 0 ? ` (${toolEvents} tool${toolEvents > 1 ? "s" : ""})` : ""
-      await sendFinalAskResponse(interaction, threadIdForFollowups, `Done${suffix}.`, usageFooter)
+      await sendFinalAskResponse(interaction, threadIdForFollowups, `Error occurred.${helpMsg}`)
     }
+    } else if (!text) {
+      const suffix = toolEvents > 0 ? ` (${toolEvents} tool${toolEvents > 1 ? "s" : ""})` : ""
+      await sendFinalAskResponse(interaction, threadIdForFollowups, `Done${suffix}.`)
+    }
+
+    const fileLines = (result.filesEdited || []).slice(0, 10).map((file) => `- \`${file}\``)
+    const filesSummary = result.filesEdited && result.filesEdited.length > 0
+      ? `${fileLines.join("\n")}${result.filesEdited.length > 10 ? `\n- and ${result.filesEdited.length - 10} more` : ""}`
+      : "No file edits reported"
+
+    await sendFollowup(
+      interaction.application_id,
+      interaction.token,
+      "",
+      undefined,
+      threadIdForFollowups,
+      [
+        {
+          title: "Run Summary",
+          description: usageFooter || "Usage not reported",
+          fields: [
+            {
+              name: "Files Edited",
+              value: clipEmbedDescription(filesSummary, 1024),
+            },
+          ],
+        },
+      ],
+    )
 
     await updateOriginalResponse(
       interaction.application_id,

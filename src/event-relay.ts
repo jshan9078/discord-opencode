@@ -49,6 +49,7 @@ export interface EventRelayResult {
   timedOut: boolean
   reason: "session_complete" | "idle_timeout" | "total_timeout" | "aborted"
   hadError: boolean
+  filesEdited?: string[]
   usage?: {
     providerId: string
     modelId: string
@@ -261,6 +262,7 @@ export async function relaySessionEvents(
 
   let hadError = false
   let usage: EventRelayResult["usage"]
+  const filesEdited = new Set<string>()
   let sawTextDelta = false
   let emittedFallbackText = false
   const lastTextByPart = new Map<string, string>()
@@ -286,6 +288,7 @@ export async function relaySessionEvents(
           timedOut: false,
           reason: "session_complete",
           hadError,
+          filesEdited: [...filesEdited],
           usage,
         }
       }
@@ -382,6 +385,15 @@ export async function relaySessionEvents(
           const time = part.time && typeof part.time === "object" ? part.time as Record<string, unknown> : undefined
           if (typeof time?.end === "number") {
             await sink.onReasoningDelta({ partId, text: "", completed: true })
+          }
+        }
+
+        if (part?.type === "patch") {
+          const files = Array.isArray(part.files) ? part.files : []
+          for (const file of files) {
+            if (typeof file === "string" && file.trim()) {
+              filesEdited.add(file)
+            }
           }
         }
 
@@ -499,6 +511,7 @@ export async function relaySessionEvents(
       timedOut: true,
       reason: timeoutReason,
       hadError,
+      filesEdited: [...filesEdited],
       usage,
     }
   }
@@ -508,6 +521,7 @@ export async function relaySessionEvents(
     timedOut: false,
     reason: "aborted",
     hadError,
+    filesEdited: [...filesEdited],
     usage,
   }
 }

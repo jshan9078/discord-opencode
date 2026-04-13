@@ -51,6 +51,7 @@ export interface EventRelayResult {
   reason: "session_complete" | "idle_timeout" | "total_timeout" | "aborted"
   hadError: boolean
   filesEdited?: string[]
+  lastAssistantMessageId?: string
   usage?: {
     providerId: string
     modelId: string
@@ -278,6 +279,7 @@ export async function relaySessionEvents(
   const partTypeById = new Map<string, string>()
   const pendingDeltaByPart = new Map<string, string[]>()
   const toolStatusByPart = new Map<string, string>()
+  let lastAssistantMessageId: string | undefined
 
   try {
     for await (const event of events.stream) {
@@ -525,6 +527,15 @@ export async function relaySessionEvents(
       }
 
       if (event.type === "message.updated") {
+        const info = event.properties?.info && typeof event.properties.info === "object"
+          ? event.properties.info as Record<string, unknown>
+          : undefined
+        const role = asText(info?.role)
+        const infoId = asText(info?.id)
+        if (role === "assistant" && infoId) {
+          lastAssistantMessageId = infoId
+        }
+
         const status = asStatus(event.properties?.status)
         if (!sawTextDelta && !emittedFallbackText && ["complete", "completed", "done", "finished"].includes(status)) {
           const finalText = extractTextFromMessageUpdated(event.properties)
@@ -554,6 +565,7 @@ export async function relaySessionEvents(
       reason: timeoutReason,
       hadError,
       filesEdited: [...filesEdited],
+      lastAssistantMessageId,
       usage,
     }
   }
@@ -565,6 +577,7 @@ export async function relaySessionEvents(
       reason: "session_complete",
       hadError,
       filesEdited: [...filesEdited],
+      lastAssistantMessageId,
       usage,
     }
   }
@@ -575,6 +588,7 @@ export async function relaySessionEvents(
     reason: "aborted",
     hadError,
     filesEdited: [...filesEdited],
+    lastAssistantMessageId,
     usage,
   }
 }

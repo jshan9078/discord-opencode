@@ -220,6 +220,19 @@ export class OpencodeRuntime {
     })
   }
 
+  async fetchSessionDiff(sessionId: string, messageId: string): Promise<string[]> {
+    try {
+      const response = await this.request<Array<{ file?: string }>>(
+        `/session/${sessionId}/diff?messageID=${encodeURIComponent(messageId)}`,
+      )
+      return response
+        .map((item) => (typeof item.file === "string" ? item.file : ""))
+        .filter(Boolean)
+    } catch {
+      return []
+    }
+  }
+
   async *subscribeEvents(signal?: AbortSignal): AsyncGenerator<RuntimeEvent> {
     let response: Response
     try {

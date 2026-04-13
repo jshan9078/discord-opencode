@@ -75,6 +75,7 @@ export async function executePromptForChannel(
       ok: true
       hadError?: boolean
       filesEdited?: string[]
+      lastAssistantMessageId?: string
       usage?: {
         providerId: string
         modelId: string
@@ -170,10 +171,19 @@ export async function executePromptForChannel(
     }
   }
 
+  let filesEdited = relayResult.filesEdited || []
+  if (filesEdited.length === 0 && relayResult.lastAssistantMessageId) {
+    const fetched = await runtime.fetchSessionDiff(sessionId, relayResult.lastAssistantMessageId)
+    if (fetched.length > 0) {
+      filesEdited = fetched
+    }
+  }
+
   return {
     ok: true,
     hadError: relayResult.hadError,
-    filesEdited: relayResult.filesEdited,
+    filesEdited,
+    lastAssistantMessageId: relayResult.lastAssistantMessageId,
     usage: relayResult.usage,
   }
 }

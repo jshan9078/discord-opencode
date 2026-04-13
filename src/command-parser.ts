@@ -17,6 +17,7 @@ export type ParsedCommand =
   | { type: "auth_connect"; providerId: string; methodHint?: string }
   | { type: "auth_set_key"; providerId: string }
   | { type: "auth_disconnect"; providerId: string }
+  | { type: "stop" }
   | { type: "help" }
   | { type: "invalid"; message: string }
   | { type: "prompt"; text: string }
@@ -208,6 +209,10 @@ export function parseDiscordCommand(input: string): ParsedCommand {
       return { type: "invalid", message: "Usage: auth disconnect <provider>" }
     }
     return { type: "auth_disconnect", providerId: tokens[2] }
+  }
+
+  if (lower[0] === "stop") {
+    return { type: "stop" }
   }
 
   if (lower[0] === "help") {

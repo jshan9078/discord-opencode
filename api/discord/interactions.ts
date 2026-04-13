@@ -1570,6 +1570,64 @@ export default async function handler(
       credentials,
     )
 
+    if (commandResult.message === "stop:sandbox") {
+      const [{ getSandboxManager }] = await Promise.all([
+        import("../../src/sandbox-manager.js"),
+      ])
+      const sandboxManager = getSandboxManager()
+      await sandboxManager.stop(currentChannelId)
+      await sendChunkedInteractionResponse(interaction, res, "Sandbox stopped for this thread.")
+      return
+    }
+
+    if (commandResult.message === "project_select:show_repo_menu") {
+      const [{ getGitHubClient }] = await Promise.all([
+        import("../../src/github-client.js"),
+      ])
+      const gh = getGitHubClient()
+      if (!gh) {
+        await sendChunkedInteractionResponse(
+          interaction,
+          res,
+          "GitHub is not configured. Set GITHUB_TOKEN to use project selection.",
+        )
+        return
+      }
+      const repos = await gh.listRepos()
+      if (repos.length === 0) {
+        await sendChunkedInteractionResponse(
+          interaction,
+          res,
+          "No repositories found for your account.",
+        )
+        return
+      }
+      const repoOptions = repos.map((r) => ({
+        label: r.name,
+        value: `${r.fullName.split("/")[0]}:${r.name}`,
+        description: r.defaultBranch,
+      }))
+      await sendChunkedInteractionResponse(interaction, res, "Select a repository:", {
+        type: 4,
+        data: {
+          components: [
+            {
+              type: 1,
+              components: [
+                {
+                  type: 3,
+                  custom_id: `project:repo:${currentChannelId}`,
+                  placeholder: "Select a repo",
+                  options: repoOptions.slice(0, 25),
+                },
+              ],
+            },
+          ],
+        },
+      })
+      return
+    }
+
     await sendChunkedInteractionResponse(interaction, res, commandResult.message || "Done.")
   } catch (error) {
     console.error("Discord interaction handler failed:", error)

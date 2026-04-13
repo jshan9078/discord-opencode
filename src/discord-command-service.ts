@@ -304,6 +304,14 @@ export function handleDiscordCommand(
     }
   }
 
+  if (parsed.type === "stop") {
+    return {
+      handled: true,
+      isPrompt: false,
+      message: "stop:sandbox",
+    }
+  }
+
   return {
     handled: false,
     isPrompt: true,

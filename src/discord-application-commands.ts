@@ -181,5 +181,10 @@ export function buildApplicationCommands(): DiscordApplicationCommand[] {
         },
       ],
     },
+    {
+      name: "stop",
+      description: "Stop the sandbox for this thread",
+      type: 1,
+    },
   ]
 }

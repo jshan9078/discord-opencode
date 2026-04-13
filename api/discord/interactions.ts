@@ -1302,9 +1302,7 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
         reasoningBuffer += text
         await flushReasoning(false)
       },
-      onToolActivity: async (toolMessage: string) => {
-        await sendFollowup(interaction.application_id, interaction.token, `> ${toolMessage}`, undefined, threadIdForFollowups)
-      },
+      onToolActivity: async () => {},
       onToolRequest: async (payload) => {
         toolEvents += 1
         toolSequence += 1

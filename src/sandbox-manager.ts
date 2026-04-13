@@ -38,7 +38,7 @@ export interface SandboxManagerOptions {
 const DEFAULT_OPTIONS: Required<SandboxManagerOptions> = {
   runtime: "node24",
   vcpus: 2,
-  timeout: 30 * 60 * 1000, // 30 minutes
+  timeout: 45 * 60 * 1000, // 45 minutes
   persistent: true,
 }
 

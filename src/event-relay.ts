@@ -29,6 +29,7 @@ export interface EventRelaySink {
   onToolResult?(payload: {
     toolCallId?: string
     toolName: string
+    status?: "completed" | "error"
     resultSummary?: string
     resultRaw?: unknown
   }): Promise<void>
@@ -414,6 +415,7 @@ export async function relaySessionEvents(
                 await sink.onToolResult({
                   toolCallId: toolCallId || undefined,
                   toolName: tool,
+                  status,
                   resultSummary: toSummary(resultRaw),
                   resultRaw,
                 })

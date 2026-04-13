@@ -129,7 +129,16 @@ async function sendFollowup(
   components?: unknown[],
   threadId?: string,
   embeds?: unknown[],
-): Promise<void> {
+): Promise<string | undefined> {
+  const parseMessageId = async (response: Response): Promise<string | undefined> => {
+    try {
+      const data = await response.json() as { id?: string }
+      return data.id
+    } catch {
+      return undefined
+    }
+  }
+
   if (threadId && process.env.DISCORD_BOT_TOKEN) {
     const threadResponse = await fetch(`https://discord.com/api/v10/channels/${threadId}/messages`, {
       method: "POST",
@@ -141,7 +150,7 @@ async function sendFollowup(
     }).catch(() => null)
 
     if (threadResponse?.ok) {
-      return
+      return await parseMessageId(threadResponse)
     }
 
     // If direct thread post fails, try webhook with explicit thread_id next.
@@ -155,7 +164,7 @@ async function sendFollowup(
     ).catch(() => null)
 
     if (webhookThreadResponse?.ok) {
-      return
+      return await parseMessageId(webhookThreadResponse)
     }
 
     const threadErrorText = threadResponse ? await threadResponse.text().catch(() => "") : "no response"
@@ -191,6 +200,26 @@ async function sendFollowup(
     const errorText = await response.text().catch(() => "")
     throw new Error(`Discord followup failed: ${response.status} ${errorText}`)
   }
+
+  return await parseMessageId(response)
+}
+
+async function editThreadMessage(threadId: string, messageId: string, content: string): Promise<boolean> {
+  const token = process.env.DISCORD_BOT_TOKEN
+  if (!token) {
+    return false
+  }
+
+  const response = await fetch(`https://discord.com/api/v10/channels/${threadId}/messages/${messageId}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bot ${token}`,
+    },
+    body: JSON.stringify({ content }),
+  }).catch(() => null)
+
+  return Boolean(response?.ok)
 }
 
 function splitDiscordMessage(content: string, limit = DISCORD_MESSAGE_LIMIT): string[] {
@@ -522,6 +551,18 @@ function stripInternalReasoningLeak(text: string): string {
   }
 
   return cleaned.trimStart()
+}
+
+function formatToolPreview(text: string | undefined, max = 140): string {
+  if (!text) {
+    return ""
+  }
+  const singleLine = text.replace(/\s+/g, " ").trim()
+  if (!singleLine) {
+    return ""
+  }
+  const clipped = singleLine.length > max ? `${singleLine.slice(0, max - 1)}...` : singleLine
+  return ` - ${clipped.replace(/`/g, "'")}`
 }
 
 function providerEnvCandidates(providerId: string): string[] {
@@ -1218,6 +1259,8 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
     let responseBuffer = ""
     let reasoningBuffer = ""
     let toolEvents = 0
+    const toolMessageByCall = new Map<string, string>()
+    let toolSequence = 0
     const threadIdForFollowups = effectiveThreadId
 
     const flushReasoning = async (force = false): Promise<void> => {
@@ -1264,28 +1307,33 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
       },
       onToolRequest: async (payload) => {
         toolEvents += 1
-        const requestData = payload.requestSummary || ""
-        const resultData = ""
-        const components = buildToolButtons(payload.toolName, requestData, resultData)
-        await sendFollowup(
+        toolSequence += 1
+        const callKey = payload.toolCallId || `${payload.toolName}:${toolSequence}`
+        const preview = formatToolPreview(payload.requestSummary)
+        const messageId = await sendFollowup(
           interaction.application_id,
           interaction.token,
-          `> ⏳ Tool: ${payload.toolName}`,
-          components.length > 0 ? components : undefined,
+          `> ⏳ Tool: ${payload.toolName}${preview}`,
+          undefined,
           threadIdForFollowups,
         )
+        if (messageId) {
+          toolMessageByCall.set(callKey, messageId)
+        }
       },
       onToolResult: async (payload) => {
-        const requestData = ""
-        const resultData = payload.resultSummary || ""
-        const components = buildToolButtons(payload.toolName, requestData, resultData)
-        await sendFollowup(
-          interaction.application_id,
-          interaction.token,
-          `> ✅ Tool: ${payload.toolName}`,
-          components.length > 0 ? components : undefined,
-          threadIdForFollowups,
-        )
+        const callKey = payload.toolCallId || `${payload.toolName}:${toolSequence}`
+        const doneIcon = payload.status === "error" ? "❌" : "✅"
+        const preview = formatToolPreview(payload.resultSummary)
+        const content = `> ${doneIcon} Tool: ${payload.toolName}${preview}`
+        const existingMessageId = toolMessageByCall.get(callKey)
+        if (threadIdForFollowups && existingMessageId) {
+          const updated = await editThreadMessage(threadIdForFollowups, existingMessageId, content)
+          if (updated) {
+            return
+          }
+        }
+        await sendFollowup(interaction.application_id, interaction.token, content, undefined, threadIdForFollowups)
       },
       onQuestion: async (questionMessage: string) => {
         await sendFollowup(interaction.application_id, interaction.token, `> ${questionMessage}`, undefined, threadIdForFollowups)

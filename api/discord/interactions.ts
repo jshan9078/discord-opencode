@@ -592,6 +592,34 @@ function formatToolPreview(text: string | undefined, max = 140): string {
   return ` - ${clipped.replace(/`/g, "'")}`
 }
 
+function enforceDiscordTextFormatting(text: string): string {
+  const lines = text.split("\n")
+  const converted: string[] = []
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
+      const cells = trimmed
+        .split("|")
+        .map((cell) => cell.trim())
+        .filter(Boolean)
+
+      if (cells.length >= 2) {
+        const isSeparator = cells.every((cell) => /^:?-{3,}:?$/.test(cell))
+        if (isSeparator) {
+          continue
+        }
+        converted.push(`- ${cells[0]}: ${cells.slice(1).join(" | ")}`)
+        continue
+      }
+    }
+
+    converted.push(line)
+  }
+
+  return converted.join("\n")
+}
+
 function providerEnvCandidates(providerId: string): string[] {
   const normalized = providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_")
   const candidates = [`${normalized}_API_KEY`]
@@ -1371,9 +1399,9 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
     }
 
     const flushAssistantStream = async (force = false): Promise<void> => {
-      const sanitized = stripInternalReasoningLeak(
+      const sanitized = enforceDiscordTextFormatting(stripInternalReasoningLeak(
         stripInjectedPromptScaffolding(responseBuffer, prompt, runtimeContext),
-      )
+      ))
       const pending = sanitized.slice(streamedLength)
       if (!pending) {
         return
@@ -1557,15 +1585,17 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
       registry.getModel(selection.providerId, selection.modelId)?.contextWindow,
     )
 
-    for (const partId of reasoningBufferByPart.keys()) {
-      await flushReasoning(partId, true)
+    if (!assistantStreamStarted) {
+      for (const partId of reasoningBufferByPart.keys()) {
+        await flushReasoning(partId, true)
+      }
     }
 
     await flushAssistantStream(true)
 
-    const text = stripInternalReasoningLeak(
+    const text = enforceDiscordTextFormatting(stripInternalReasoningLeak(
       stripInjectedPromptScaffolding(responseBuffer.trim(), prompt, runtimeContext),
-    )
+    ))
     if (result.hadError) {
     const helpMsg = "\n\nTo switch models, use `/use-provider` and `/use-model`"
     if (text && streamedLength === 0) {

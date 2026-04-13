@@ -63,7 +63,7 @@ const DISCORD_OUTPUT_POLICY_BLOCK = [
   "- Code blocks: `` `inline` `` and triple backticks for multiline",
   "- Block quotes: `> quote` and `>>> multiline quote`",
   "",
-  "Do not use markdown tables.",
+  "YOU MUST NOT USE MARKDOWN TABLES.",
   "",
 ].join("\n")
 

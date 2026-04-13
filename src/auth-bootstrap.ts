@@ -38,6 +38,10 @@ export async function ensureProviderAuth(
   credentials: CredentialStore,
   providerId: string,
 ): Promise<AuthResult> {
+  if (providerId === "opencode") {
+    return { type: "ok" }
+  }
+
   const provider = registry.getProvider(providerId)
   if (!provider) {
     return { type: "needs_local_oauth" }

@@ -87,10 +87,33 @@ export class OpencodeRuntime {
     return methods
   }
 
-  async fetchModelIds(): Promise<string[]> {
+  async fetchProviderCatalog(): Promise<Array<{ id: string; models: Array<{ id: string; label?: string }> }>> {
     try {
-      const response = await this.request<{ data?: Array<{ id: string }> }>("/model")
-      return (response.data || []).map((item) => item.id)
+      const response = await this.request<{
+        all?: Array<{
+          id?: string
+          models?: Record<string, { id?: string; name?: string }>
+        }>
+        data?: {
+          all?: Array<{
+            id?: string
+            models?: Record<string, { id?: string; name?: string }>
+          }>
+        }
+      }>("/provider")
+
+      const all = response.data?.all || response.all || []
+      return all
+        .filter((provider): provider is { id: string; models?: Record<string, { id?: string; name?: string }> } =>
+          typeof provider?.id === "string",
+        )
+        .map((provider) => ({
+          id: provider.id,
+          models: Object.entries(provider.models || {}).map(([modelId, model]) => ({
+            id: model.id || modelId,
+            label: model.name,
+          })),
+        }))
     } catch {
       return []
     }
@@ -98,23 +121,14 @@ export class OpencodeRuntime {
 
   async syncRegistry(registry: ProviderRegistry): Promise<void> {
     const methodsByProvider = await this.fetchProviderAuthMethods()
-    const modelIds = await this.fetchModelIds()
-
-    const modelsByProvider = new Map<string, Array<{ id: string; label?: string }>>()
-    for (const modelId of modelIds) {
-      const [providerId] = modelId.split("/")
-      if (!providerId) {
-        continue
-      }
-      if (!modelsByProvider.has(providerId)) {
-        modelsByProvider.set(providerId, [])
-      }
-      modelsByProvider.get(providerId)!.push({ id: modelId })
-    }
+    const catalog = await this.fetchProviderCatalog()
+    const modelsByProvider = new Map<string, Array<{ id: string; label?: string }>>(
+      catalog.map((provider) => [provider.id, provider.models]),
+    )
 
     const providerIds = new Set<string>([
       ...Object.keys(methodsByProvider),
-      ...modelsByProvider.keys(),
+      ...catalog.map((provider) => provider.id),
     ])
 
     const providers: ProviderRecord[] = [...providerIds].map((id) => {

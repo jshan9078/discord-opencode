@@ -52,6 +52,14 @@ export class GitHubClient {
 
     return branches.map((b) => ({ name: b.name }))
   }
+
+  async getViewerLogin(): Promise<string> {
+    const user: { login?: string } = await this.fetch("/user")
+    if (!user.login) {
+      throw new Error("GitHub API did not return viewer login")
+    }
+    return user.login
+  }
 }
 
 export function getGitHubClient(): GitHubClient | null {

@@ -14,9 +14,13 @@ const GITHUB_POLICY_BLOCK = [
   "## GitHub CLI Policy",
   "",
   "- You are running in a sandboxed environment.",
+  "- You are running in a Vercel sandbox; do not assume user repositories already exist in the local filesystem.",
+  "- Treat GitHub as the source of truth for user projects.",
   "- The GitHub CLI (`gh`) is available.",
   "- For any GitHub-related task (GitHub URLs, repositories, pull requests, issues, comments, checks, releases), use `gh` commands first.",
   "- Do not use generic web fetching for GitHub content unless `gh` cannot access the resource.",
+  "- For read-only repository questions (README, files, metadata), use `gh` without cloning when possible.",
+  "- If the task requires editing files, running code, tests, or builds, clone the repository into the sandbox first and then work locally.",
   "",
 ].join("\n")
 const DISCORD_OUTPUT_POLICY_BLOCK = [

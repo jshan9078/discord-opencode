@@ -1260,6 +1260,22 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
     const oauthStore = new OAuthTokenStore()
     const registry = await loadProviderRegistry()
     const providerAuth = await oauthStore.getUserProviderAuth(userId, selection.providerId)
+    let runtimeContext: string | undefined
+
+    try {
+      const { getGitHubClient } = await import("../../src/github-client.js")
+      const ghClient = getGitHubClient()
+      if (ghClient) {
+        const githubLogin = await ghClient.getViewerLogin()
+        runtimeContext = [
+          "Runtime GitHub context:",
+          `- Authenticated GitHub login: ${githubLogin}`,
+          "- For repository references without explicit owner, assume this login by default.",
+        ].join("\n")
+      }
+    } catch {
+      // Continue without explicit GitHub login context.
+    }
 
   // Check if sandbox was newly created (old one expired) - fetch recovery context
     const isNewSandbox = oldSandboxId && oldSandboxId !== sandboxContext.sandboxId
@@ -1496,6 +1512,7 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
       {
         recoveryContext: recoveryContext || undefined,
         providerAuth,
+        runtimeContext,
       },
     )
 

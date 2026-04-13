@@ -68,6 +68,7 @@ export async function executePromptForChannel(
     forceNewSession?: boolean
     recoveryContext?: string
     providerAuth?: Record<string, unknown>
+    runtimeContext?: string
   } = {},
 ): Promise<
   | {
@@ -145,10 +146,13 @@ export async function executePromptForChannel(
         "",
         options.recoveryContext,
         "",
+        ...(options.runtimeContext ? [options.runtimeContext, ""] : []),
         "Current user request:",
         prompt,
       ].join("\n")
-    : prompt
+    : options.runtimeContext
+      ? [options.runtimeContext, "", prompt].join("\n")
+      : prompt
 
   await runtime.promptAsync(sessionId, finalPrompt, {
     providerId,

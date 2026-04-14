@@ -2246,7 +2246,7 @@ async function executeQueuedAskRun(run: AskQueueRunRequest): Promise<void> {
 
 async function processAskInteraction(interaction: Interaction, prompt: string, origin?: string): Promise<void> {
   try {
-    const channelId = interaction.channel_id
+    let channelId = interaction.channel_id
     const userId = getInteractionUserId(interaction)
 
     if (!channelId || !userId) {
@@ -2287,6 +2287,7 @@ async function processAskInteraction(interaction: Interaction, prompt: string, o
         await sendFollowup(interaction.application_id, interaction.token, "Failed to start session for /ask.")
         return
       }
+      channelId = threadId
     }
 
     const statusMessage = "Processing..."

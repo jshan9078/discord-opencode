@@ -54,19 +54,48 @@ async function readJson<T>(path: string, fallback: T): Promise<T> {
     }
 
     const text = await new Response(result.stream).text()
-    return JSON.parse(text) as T
-  } catch {
+    if (!text || text.trim() === "") {
+      console.warn("workspace: empty blob, returning fallback", { path })
+      return fallback
+    }
+
+    const parsed = JSON.parse(text)
+    if (!parsed || typeof parsed !== "object") {
+      console.warn("workspace: invalid JSON structure, returning fallback", { path })
+      return fallback
+    }
+
+    return parsed as T
+  } catch (err) {
+    console.warn("workspace: read failed, returning fallback", { path, error: String(err) })
     return fallback
   }
 }
 
 async function writeJson(path: string, value: unknown): Promise<void> {
   requireBlobToken()
-  await put(path, JSON.stringify(value), {
-    access: "private",
-    allowOverwrite: true,
-    contentType: "application/json",
-  })
+
+  const jsonStr = JSON.stringify(value)
+  if (!jsonStr) {
+    throw new Error("workspace: empty write prevented")
+  }
+
+  try {
+    await put(path, jsonStr, {
+      access: "private",
+      allowOverwrite: true,
+      contentType: "application/json",
+      cacheControlMaxAge: 0,
+    })
+
+    const verify = await get(path, { access: "private" })
+    if (!verify || !("stream" in verify)) {
+      console.error("workspace: write succeeded but read back nothing", { path })
+    }
+  } catch (err) {
+    console.error("workspace: write failed", { path, error: String(err) })
+    throw err
+  }
 }
 
 export class WorkspaceEntryStore {

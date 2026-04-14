@@ -40,4 +40,13 @@ describe("parseDiscordCommand", () => {
     const parsed = parseDiscordCommand("use provider")
     expect(parsed.type).toBe("invalid")
   })
+
+  it("parses opencode and checkpoint commands", () => {
+    expect(parseDiscordCommand("opencode")).toEqual({ type: "opencode" })
+    expect(parseDiscordCommand("opencode anomalyco/opencode")).toEqual({
+      type: "opencode",
+      project: "anomalyco/opencode",
+    })
+    expect(parseDiscordCommand("checkpoint")).toEqual({ type: "checkpoint" })
+  })
 })

@@ -1,5 +1,6 @@
 import nacl from "tweetnacl"
 import { waitUntil } from "@vercel/functions"
+import { Sandbox } from "@vercel/sandbox"
 import { sendDiscordRateLimitedRequest } from "../../src/discord-rate-limited-fetch.js"
 
 type SandboxContext = {
@@ -448,6 +449,24 @@ async function handleAutocompleteInteraction(interaction: Interaction): Promise<
       .map((model) => ({
         name: (model.label ? `${model.id} (${model.label})` : model.id).slice(0, 100),
         value: model.id,
+      }))
+    return autocompleteChoices(choices)
+  }
+
+  if (focused.name === "project") {
+    const { getGitHubClient } = await import("../../src/github-client.js")
+    const gh = getGitHubClient()
+    if (!gh) {
+      return autocompleteChoices([])
+    }
+
+    const repos = await gh.listRepos().catch(() => [])
+    const choices = repos
+      .filter((repo) => !query || startsWith(repo.fullName) || startsWith(repo.name))
+      .slice(0, DISCORD_AUTOCOMPLETE_LIMIT)
+      .map((repo) => ({
+        name: repo.fullName,
+        value: repo.fullName,
       }))
     return autocompleteChoices(choices)
   }
@@ -1122,6 +1141,375 @@ async function handleProjectCommand(interaction: Interaction): Promise<Response>
   }
 }
 
+function parseProjectInput(project: string): { project: string; repoUrl: string; branch: string } {
+  const normalized = project.trim().replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "")
+  const [ownerRepo, branchHint] = normalized.split("#")
+  const branch = branchHint || "main"
+  if (!ownerRepo || !ownerRepo.includes("/")) {
+    throw new Error("Project must be in owner/repo format.")
+  }
+  return {
+    project: ownerRepo,
+    repoUrl: `https://github.com/${ownerRepo}`,
+    branch,
+  }
+}
+
+function truncateLabel(input: string, max = 80): string {
+  const compact = input.replace(/\s+/g, " ").trim()
+  return compact.length <= max ? compact : `${compact.slice(0, max - 3)}...`
+}
+
+async function createThreadFromChannel(channelId: string, name: string): Promise<string | undefined> {
+  if (!process.env.DISCORD_BOT_TOKEN) {
+    return undefined
+  }
+
+  const response = await sendDiscordRateLimitedRequest(
+    `https://discord.com/api/v10/channels/${channelId}/threads`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
+      },
+      body: JSON.stringify({
+        name: truncateLabel(name, 90),
+        auto_archive_duration: 1440,
+        type: 11,
+      }),
+    },
+  ).catch(() => null)
+
+  if (!response?.ok) {
+    return undefined
+  }
+
+  const data = await response.json() as { id?: string }
+  return data.id
+}
+
+async function startThreadSession(
+  threadId: string,
+  repoUrl: string | undefined,
+  branch: string,
+  options?: { snapshotId?: string; resetSessions?: boolean; cloneRepoOnSnapshot?: boolean },
+): Promise<{ sandboxId: string; opencodePassword: string }> {
+  const [{ getSandboxManager }, { ThreadRuntimeStore }, { ChannelStateStore }] = await Promise.all([
+    import("../../src/sandbox-manager.js"),
+    import("../../src/thread-runtime-store.js"),
+    import("../../src/channel-state-store.js"),
+  ])
+
+  const sandboxManager = getSandboxManager()
+  const runtimeStore = new ThreadRuntimeStore()
+  const channelStateStore = new ChannelStateStore()
+
+  const context = options?.snapshotId
+    ? await sandboxManager.createFromSnapshot(
+      threadId,
+      options.snapshotId,
+      options.cloneRepoOnSnapshot ? repoUrl : undefined,
+      branch,
+    )
+    : await sandboxManager.getOrCreate(threadId, undefined, repoUrl, branch)
+
+  await runtimeStore.setSandbox(threadId, context.sandboxId, context.opencodePassword)
+  if (options?.resetSessions !== false) {
+    await runtimeStore.clearSessions(threadId)
+  }
+
+  const threadState = channelStateStore.get(threadId)
+  if (repoUrl) {
+    const projectName = repoUrl.split("/").slice(-1)[0] || "Project"
+    channelStateStore.setProject(threadId, repoUrl, branch, projectName)
+  } else {
+    delete threadState.repoUrl
+    delete threadState.branch
+    delete threadState.projectName
+    channelStateStore.set(threadState)
+  }
+
+  return {
+    sandboxId: context.sandboxId,
+    opencodePassword: context.opencodePassword,
+  }
+}
+
+async function handleOpencodeCommand(interaction: Interaction, projectInput?: string): Promise<Response> {
+  const channelId = interaction.channel_id
+  const userId = getInteractionUserId(interaction)
+  if (!channelId || !userId) {
+    return json({ type: 4, data: { content: !channelId ? "Missing channel ID." : "Missing user ID." } })
+  }
+
+  const inThread = await isThreadChannel(channelId)
+  if (inThread) {
+    return json({
+      type: 4,
+      data: {
+        content: "Run `/opencode` from a channel to start or resume a session.",
+      },
+    })
+  }
+
+  const [{ WorkspaceEntryStore }] = await Promise.all([
+    import("../../src/workspace-entry-store.js"),
+  ])
+
+  const workspaceStore = new WorkspaceEntryStore()
+
+  if (!projectInput) {
+    const rawBaselineSnapshotId = await ensureRawBaselineSnapshot()
+    const threadId = await createThreadFromChannel(channelId, "OpenCode Session")
+    if (!threadId) {
+      return json({ type: 4, data: { content: "Failed to create thread for /opencode." } })
+    }
+
+    await startThreadSession(threadId, undefined, "main", {
+      snapshotId: rawBaselineSnapshotId,
+      resetSessions: true,
+    })
+    await workspaceStore.setThreadBinding({
+      threadId,
+      userId,
+      updatedAt: Date.now(),
+    })
+
+    return json({
+      type: 4,
+      data: {
+        content: `Starting empty sandbox in <#${threadId}>. Use /ask in that thread to begin.`,
+      },
+    })
+  }
+
+  const parsedProject = parseProjectInput(projectInput)
+  const entries = await workspaceStore.listEntries(userId, parsedProject.project)
+
+  const options = [
+    ...entries.slice(0, 12).map((entry) => ({
+      label: `Resume: ${truncateLabel(entry.name, 70)}`,
+      value: `resume:${entry.id}`,
+      description: entry.snapshotId ? `snapshot ${entry.snapshotId.slice(0, 10)}` : "latest workspace state",
+    })),
+    ...entries.slice(0, 6).map((entry) => ({
+      label: `Delete: ${truncateLabel(entry.name, 70)}`,
+      value: `delete:${entry.id}`,
+      description: "remove saved workspace entry",
+    })),
+    {
+      label: "New",
+      value: "new",
+      description: "start new project session",
+    },
+  ].slice(0, 25)
+
+  return json({
+    type: 4,
+    data: {
+      content: `Select a saved workspace for **${parsedProject.project}** (resume/delete) or choose New:`,
+      components: [
+        {
+          type: 1,
+          components: [
+            {
+              type: 3,
+              custom_id: `opencode:pick:${userId}:${parsedProject.project}:${parsedProject.branch}`,
+              placeholder: "Choose resume, delete, or new",
+              options,
+            },
+          ],
+        },
+      ],
+    },
+  })
+}
+
+async function handleOpencodePicker(interaction: Interaction): Promise<Response> {
+  const customId = interaction.data?.custom_id
+  const selected = interaction.data?.values?.[0]
+  if (!customId || !selected) {
+    return json({ type: 4, data: { content: "Missing selection." } })
+  }
+
+  const parts = customId.split(":")
+  if (parts.length < 5) {
+    return json({ type: 4, data: { content: "Invalid picker data." } })
+  }
+
+  const [, , userId, project, branch] = parts
+  const channelId = interaction.channel_id
+  if (!channelId) {
+    return json({ type: 4, data: { content: "Missing channel." } })
+  }
+
+  const [{ WorkspaceEntryStore }] = await Promise.all([
+    import("../../src/workspace-entry-store.js"),
+  ])
+
+  const workspaceStore = new WorkspaceEntryStore()
+
+  if (selected.startsWith("delete:")) {
+    const entryId = selected.slice("delete:".length)
+    const existing = await workspaceStore.getEntry(userId, project, entryId)
+    const deleted = await workspaceStore.deleteEntry(userId, project, entryId)
+    if (deleted && existing?.threadId) {
+      const binding = await workspaceStore.getThreadBinding(existing.threadId)
+      if (binding?.workspaceEntryId === entryId) {
+        await workspaceStore.setThreadBinding({
+          threadId: binding.threadId,
+          userId: binding.userId,
+          updatedAt: Date.now(),
+        })
+      }
+    }
+    return json({
+      type: 7,
+      data: {
+        content: deleted
+          ? `Deleted saved workspace entry for **${project}**.`
+          : "Could not find that workspace entry.",
+        components: [],
+      },
+    })
+  }
+
+  if (selected.startsWith("resume:")) {
+    const entryId = selected.slice("resume:".length)
+    const entry = await workspaceStore.getEntry(userId, project, entryId)
+    if (!entry) {
+      return json({ type: 7, data: { content: "Saved workspace entry not found.", components: [] } })
+    }
+
+    if (entry.threadId && await isThreadChannel(entry.threadId)) {
+      await startThreadSession(entry.threadId, entry.repoUrl, entry.branch || branch || "main", {
+        snapshotId: entry.snapshotId,
+        resetSessions: false,
+      })
+      await workspaceStore.setThreadBinding({
+        threadId: entry.threadId,
+        userId,
+        project,
+        workspaceEntryId: entry.id,
+        hasCustomName: true,
+        updatedAt: Date.now(),
+      })
+      return json({
+        type: 7,
+        data: {
+          content: `Resuming this session in <#${entry.threadId}>.`,
+          components: [],
+        },
+      })
+    }
+
+    const threadId = await createThreadFromChannel(channelId, `OpenCode ${project}`)
+    if (!threadId) {
+      return json({ type: 7, data: { content: "Failed to create resume thread.", components: [] } })
+    }
+
+    await startThreadSession(threadId, entry.repoUrl, entry.branch || branch || "main", {
+      snapshotId: entry.snapshotId,
+      resetSessions: false,
+    })
+    await workspaceStore.setThreadBinding({
+      threadId,
+      userId,
+      project,
+      workspaceEntryId: entry.id,
+      updatedAt: Date.now(),
+    })
+    await workspaceStore.updateEntry(userId, project, entry.id, { threadId })
+
+    return json({
+      type: 7,
+      data: {
+        content: `Resuming this session in <#${threadId}>.`,
+        components: [],
+      },
+    })
+  }
+
+  const parsedProject = parseProjectInput(project)
+  const threadId = await createThreadFromChannel(channelId, `OpenCode ${project}`)
+  if (!threadId) {
+    return json({ type: 7, data: { content: "Failed to create thread.", components: [] } })
+  }
+
+  const rawBaselineSnapshotId = await ensureRawBaselineSnapshot()
+  await startThreadSession(threadId, parsedProject.repoUrl, branch || parsedProject.branch, {
+    snapshotId: rawBaselineSnapshotId,
+    resetSessions: true,
+    cloneRepoOnSnapshot: true,
+  })
+  const entry = await workspaceStore.createEntry({
+    userId,
+    project,
+    repoUrl: parsedProject.repoUrl,
+    branch: branch || parsedProject.branch,
+    name: `New session ${new Date().toISOString()}`,
+    threadId,
+  })
+  await workspaceStore.setThreadBinding({
+    threadId,
+    userId,
+    project,
+    workspaceEntryId: entry.id,
+    updatedAt: Date.now(),
+  })
+
+  return json({
+    type: 7,
+    data: {
+      content: `Started a new session in <#${threadId}>.`,
+      components: [],
+    },
+  })
+}
+
+async function refreshRawBaselineSnapshot(): Promise<string> {
+  const [{ getSandboxManager }, { WorkspaceEntryStore }] = await Promise.all([
+    import("../../src/sandbox-manager.js"),
+    import("../../src/workspace-entry-store.js"),
+  ])
+
+  const sandboxManager = getSandboxManager()
+  const workspaceStore = new WorkspaceEntryStore()
+  const key = `raw-baseline-${Date.now()}`
+  const { snapshotId } = await sandboxManager.createRawBaselineSnapshot(key)
+  await workspaceStore.setRawBaseline(snapshotId)
+  return snapshotId
+}
+
+async function ensureRawBaselineSnapshot(maxAgeMs = 24 * 60 * 60_000): Promise<string> {
+  const [{ WorkspaceEntryStore }] = await Promise.all([
+    import("../../src/workspace-entry-store.js"),
+  ])
+
+  const workspaceStore = new WorkspaceEntryStore()
+  const baseline = await workspaceStore.getRawBaseline()
+  const isFresh = Boolean(baseline.snapshotId && baseline.updatedAt && (Date.now() - baseline.updatedAt) < maxAgeMs)
+  if (isFresh && baseline.snapshotId) {
+    return baseline.snapshotId
+  }
+  return await refreshRawBaselineSnapshot()
+}
+
+async function getRawBaselineStatus(maxAgeMs = 24 * 60 * 60_000): Promise<{ snapshotId?: string; stale: boolean }> {
+  const [{ WorkspaceEntryStore }] = await Promise.all([
+    import("../../src/workspace-entry-store.js"),
+  ])
+
+  const workspaceStore = new WorkspaceEntryStore()
+  const baseline = await workspaceStore.getRawBaseline()
+  if (!baseline.snapshotId || !baseline.updatedAt) {
+    return { stale: true }
+  }
+  const stale = (Date.now() - baseline.updatedAt) >= maxAgeMs
+  return { snapshotId: baseline.snapshotId, stale }
+}
+
 async function processAskInteraction(interaction: Interaction, prompt: string): Promise<void> {
   let lockRunId: string | undefined
   let lockThreadId: string | undefined
@@ -1169,82 +1557,80 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
     const channelState = stateStore.get(channelId)
     const commandIsInThread = await isThreadChannel(channelId)
 
-  // Thread behavior:
-  // - If /ask is invoked inside a thread, stay in that thread.
-  // - If /ask is invoked in a normal channel, always create a new thread.
-    let threadId = commandIsInThread ? channelId : undefined
-
-    if (!threadId) {
-      const threadName = `OpenCode: ${prompt.slice(0, 50)}${prompt.length > 50 ? "..." : ""}`
-
-      const threadResponse = messageId
-        ? await sendDiscordRateLimitedRequest(
-          `https://discord.com/api/v10/channels/${channelId}/messages/${messageId}/threads`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
-            },
-            body: JSON.stringify({
-              name: threadName,
-              auto_archive_duration: 1440,
-            }),
-          },
-        ).catch(() => null)
-        : await sendDiscordRateLimitedRequest(
-          `https://discord.com/api/v10/channels/${channelId}/threads`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
-            },
-            body: JSON.stringify({
-              name: threadName,
-              auto_archive_duration: 1440,
-              type: 11,
-            }),
-          },
-        ).catch(() => null)
-
-      if (threadResponse?.ok) {
-        const thread = (await threadResponse.json()) as { id: string }
-        threadId = thread.id
-        channelState.threadId = threadId
-        stateStore.set(channelState)
-        stateStore.set({
-          channelId: threadId,
-          repoUrl: channelState.repoUrl,
-          branch: channelState.branch,
-          projectName: channelState.projectName,
-        })
-      }
-    }
-
-    if (threadId) {
-      await updateOriginalResponse(
-        interaction.application_id,
-        interaction.token,
-        commandIsInThread ? "Working..." : `Working in <#${threadId}>...`,
-      )
-    }
-
-  const effectiveThreadId = threadId || undefined
-  if (!effectiveThreadId) {
+  if (!commandIsInThread) {
     await sendFollowup(
       interaction.application_id,
       interaction.token,
-      "Failed to create or resolve a thread for this /ask request.",
+      "Run `/opencode` first in a channel to start or resume a session.",
     )
     return
   }
 
+  const effectiveThreadId = channelId
+  await updateOriginalResponse(
+    interaction.application_id,
+    interaction.token,
+    "Working...",
+  )
+
   const conversationId = effectiveThreadId
   const conversationState = stateStore.get(conversationId)
+  const [{ WorkspaceEntryStore }] = await Promise.all([
+    import("../../src/workspace-entry-store.js"),
+  ])
+  const workspaceStore = new WorkspaceEntryStore()
+  let threadBinding = await workspaceStore.getThreadBinding(conversationId)
   const threadRuntimeStore = new ThreadRuntimeStore()
   lockStore = threadRuntimeStore
   const threadRuntimeState = await threadRuntimeStore.get(conversationId)
+
+  if (!threadBinding && threadRuntimeState.sandboxId) {
+    // Legacy migration: thread has runtime state but no binding record.
+    threadBinding = {
+      threadId: conversationId,
+      userId,
+      updatedAt: Date.now(),
+    }
+    await workspaceStore.setThreadBinding(threadBinding)
+  }
+
+  if (threadBinding && threadBinding.userId !== userId) {
+    await sendFollowup(
+      interaction.application_id,
+      interaction.token,
+      "This thread is bound to another user session. Start your own with `/opencode` in a channel.",
+      undefined,
+      effectiveThreadId,
+    )
+    return
+  }
+
+  if (threadBinding?.project && threadBinding.workspaceEntryId) {
+    const entry = await workspaceStore.getEntry(threadBinding.userId, threadBinding.project, threadBinding.workspaceEntryId)
+    if (!entry) {
+      threadBinding = {
+        threadId: conversationId,
+        userId: threadBinding.userId,
+        updatedAt: Date.now(),
+      }
+      await workspaceStore.setThreadBinding(threadBinding)
+    } else if (entry.threadId !== conversationId) {
+      await workspaceStore.updateEntry(threadBinding.userId, threadBinding.project, threadBinding.workspaceEntryId, {
+        threadId: conversationId,
+      })
+    }
+  }
+
+  if (!threadRuntimeState.sandboxId) {
+    await sendFollowup(
+      interaction.application_id,
+      interaction.token,
+      "No active thread session. Run `/opencode` from a channel first.",
+      undefined,
+      effectiveThreadId,
+    )
+    return
+  }
   const lock = await threadRuntimeStore.acquireRunLock(conversationId)
   if (!lock.acquired || !lock.runId) {
     await sendFollowup(
@@ -1281,7 +1667,7 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
   if (!commandIsInThread && effectiveThreadId) {
     await selectionStore.initializeThreadFromUser(effectiveThreadId, userId)
   }
-    if (!selection?.providerId) {
+  if (!selection?.providerId) {
     await sendFollowup(
       interaction.application_id,
       interaction.token,
@@ -1290,6 +1676,20 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
       effectiveThreadId,
     )
     return
+  }
+
+  if (threadBinding?.project && threadBinding.workspaceEntryId && !threadBinding.hasCustomName) {
+    const isFirstPrompt = !threadRuntimeState.sessionByProfile || Object.keys(threadRuntimeState.sessionByProfile).length === 0
+    if (isFirstPrompt) {
+      await workspaceStore.updateEntry(threadBinding.userId, threadBinding.project, threadBinding.workspaceEntryId, {
+        name: truncateLabel(prompt, 72),
+      })
+      await workspaceStore.setThreadBinding({
+        ...threadBinding,
+        hasCustomName: true,
+        updatedAt: Date.now(),
+      })
+    }
   }
 
     if (!selection?.modelId) {
@@ -1305,7 +1705,14 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
 
     let repoUrl: string | undefined
     let branch = "main"
-    if (conversationState.repoUrl || channelState.repoUrl) {
+    if (threadBinding?.project && threadBinding.workspaceEntryId) {
+      const entry = await workspaceStore.getEntry(threadBinding.userId, threadBinding.project, threadBinding.workspaceEntryId)
+      if (entry) {
+        repoUrl = entry.repoUrl
+        branch = entry.branch || "main"
+      }
+    }
+    if (!repoUrl && (conversationState.repoUrl || channelState.repoUrl)) {
       repoUrl = conversationState.repoUrl || channelState.repoUrl
       branch = conversationState.branch || channelState.branch || "main"
     }
@@ -1761,6 +2168,10 @@ export default async function handler(
         await sendNodeResponse(res, await handleProjectSelectMenu(interaction))
         return
       }
+      if (interaction.data?.custom_id?.startsWith("opencode:")) {
+        await sendNodeResponse(res, await handleOpencodePicker(interaction))
+        return
+      }
       await sendNodeResponse(res, json({ type: 4, data: { content: "Unknown interaction." } }))
       return
     }
@@ -1786,10 +2197,16 @@ export default async function handler(
     ])
 
     const mapped = mapInteractionCommandToText(interaction.data)
+    const parsed = parseDiscordCommand(mapped.text)
 
     if (mapped.type === "prompt") {
       waitUntil(processAskInteraction(interaction, mapped.text))
       await sendNodeResponse(res, json({ type: 5 }))
+      return
+    }
+
+    if (parsed.type === "opencode") {
+      await sendNodeResponse(res, await handleOpencodeCommand(interaction, parsed.project))
       return
     }
 
@@ -1808,12 +2225,27 @@ export default async function handler(
       const { refreshProviderRegistry } = await import("../../src/provider-registry-store.js")
 
       const result = await refreshProviderRegistry()
+      const rawStatus = await getRawBaselineStatus()
+      let rawSnapshotId = rawStatus.snapshotId || ""
+      let rawAction = "unchanged"
+      if (rawStatus.stale) {
+        try {
+          rawSnapshotId = await refreshRawBaselineSnapshot()
+          rawAction = "refreshed"
+        } catch (error) {
+          rawAction = "failed"
+          console.error("Raw baseline refresh failed:", error)
+        }
+      }
       await sendChunkedInteractionResponse(
         interaction,
         res,
         `${result.created ? "Created" : "Updated"} provider registry.\n` +
           `Providers: ${result.providerCount}\n` +
-          `Models: ${result.modelCount}`,
+          `Models: ${result.modelCount}` +
+          (rawSnapshotId
+            ? `\nRaw baseline (${rawAction}): ${rawSnapshotId}`
+            : `\nRaw baseline (${rawAction}).`),
       )
       return
     }
@@ -1824,7 +2256,6 @@ export default async function handler(
     const credentials = new CredentialStore()
     const selectionStore = new SelectionStore()
     const oauthStore = new OAuthTokenStore()
-    const parsed = parseDiscordCommand(mapped.text)
     const userId = getInteractionUserId(interaction)
     const currentChannelId = interaction.channel_id || "dm"
     const inThread = interaction.channel_id ? await isThreadChannel(interaction.channel_id) : false
@@ -2004,30 +2435,44 @@ export default async function handler(
       credentials,
     )
 
-    if (commandResult.message === "stop:sandbox") {
+    if (commandResult.message === "checkpoint:sandbox") {
       if (!inThread) {
-        await sendChunkedInteractionResponse(interaction, res, "Run /stop inside a thread. Sandboxes are thread-scoped.")
+        await sendChunkedInteractionResponse(interaction, res, "Run /checkpoint inside a thread.")
         return
       }
 
-      const [{ getSandboxManager }] = await Promise.all([
-        import("../../src/sandbox-manager.js"),
-      ])
-      const [{ ThreadRuntimeStore }] = await Promise.all([
+      const [{ ThreadRuntimeStore }, { WorkspaceEntryStore }] = await Promise.all([
         import("../../src/thread-runtime-store.js"),
+        import("../../src/workspace-entry-store.js"),
       ])
-      const sandboxManager = getSandboxManager()
-      const threadRuntimeStore = new ThreadRuntimeStore()
-      const threadRuntimeState = await threadRuntimeStore.get(currentChannelId)
-      await sandboxManager.stop(currentChannelId, threadRuntimeState.sandboxId)
-      await threadRuntimeStore.clear(currentChannelId)
+      const runtimeStore = new ThreadRuntimeStore()
+      const workspaceStore = new WorkspaceEntryStore()
+      const runtime = await runtimeStore.get(currentChannelId)
+      if (!runtime.sandboxId) {
+        await sendChunkedInteractionResponse(interaction, res, "No active sandbox in this thread. Run /opencode in a channel first.")
+        return
+      }
 
-      const state = stateStore.get(currentChannelId)
-      delete state.sandboxId
-      delete state.opencodePassword
-      stateStore.set(state)
+      const sandbox = await Sandbox.get({ sandboxId: runtime.sandboxId }).catch(() => null)
+      if (!sandbox) {
+        await sendChunkedInteractionResponse(interaction, res, "Sandbox is no longer available.")
+        return
+      }
 
-      await sendChunkedInteractionResponse(interaction, res, "Sandbox stopped for this thread.")
+      const snapshot = await sandbox.snapshot().catch(() => null)
+      if (!snapshot) {
+        await sendChunkedInteractionResponse(interaction, res, "Failed to create checkpoint snapshot.")
+        return
+      }
+
+      const binding = await workspaceStore.getThreadBinding(currentChannelId)
+      if (binding?.project && binding.workspaceEntryId) {
+        await workspaceStore.updateEntry(binding.userId, binding.project, binding.workspaceEntryId, {
+          snapshotId: snapshot.snapshotId,
+        })
+      }
+
+      await sendChunkedInteractionResponse(interaction, res, `Checkpoint created: ${snapshot.snapshotId}\nThis thread can now be resumed from this saved state.`)
       return
     }
 

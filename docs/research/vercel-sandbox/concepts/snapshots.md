@@ -1,52 +1,80 @@
+---
+title: Snapshots
+product: vercel
+url: /docs/vercel-sandbox/concepts/snapshots
+type: conceptual
+prerequisites:
+  - /docs/vercel-sandbox/concepts
+  - /docs/vercel-sandbox
+related:
+  - /docs/vercel-sandbox/sdk-reference
+  - /docs/vercel-sandbox/cli-reference
+  - /docs/vercel-sandbox/pricing
+summary: Save and restore sandbox state with snapshots for faster startups and environment sharing.
+install_vercel_plugin: npx plugins add vercel/vercel-plugin
+---
+
 # Snapshots
 
-Snapshots capture the state of a running sandbox, including the filesystem and installed packages. Use them to skip setup time on subsequent runs.
+Snapshots capture the state of a running sandbox, including the filesystem and installed packages. Use snapshots to skip setup time on subsequent runs.
 
 ## When to use snapshots
 
-- **Faster startups**: Skip dependency installation by snapshotting after setup
-- **Checkpointing**: Save progress on long-running tasks
-- **Sharing environments**: Give teammates an identical starting point
+- **Faster startups**: Skip dependency installation by snapshotting after setup.
+- **Checkpointing**: Save progress on long-running tasks.
+- **Sharing environments**: Give teammates an identical starting point.
 
-## Usage
+## Create a snapshot
 
-### Create a snapshot
+Call `snapshot()` on a running sandbox:
 
-```ts
+> **💡 Note:** Once you create a snapshot, the sandbox shuts down automatically and becomes unreachable. You don't need to stop it afterwards.
+
+```ts filename="index.ts"
 const snapshot = await sandbox.snapshot();
 ```
 
-> **Note**: Once you create a snapshot, the sandbox shuts down automatically.
+## Create a sandbox from a snapshot
 
-### Create a sandbox from a snapshot
+Pass the snapshot ID when creating a new sandbox:
 
-```ts
+```ts filename="index.ts"
 const sandbox = await Sandbox.create({
-  snapshotId: 'snap_abc123',
+  snapshotId: "snap_abc123",
 });
 ```
 
-### List snapshots
+## List snapshots
 
-```ts
+View all snapshots for your project:
+
+```ts filename="index.ts"
 const { snapshots } = await Snapshot.list();
 ```
 
-### Get a snapshot
+## Retrieve an existing snapshot
 
-```ts
-const snapshot = await Snapshot.get({ snapshotId: 'snap_abc123' });
+Look up a snapshot by ID:
+
+```ts filename="index.ts"
+const snapshot = await Snapshot.get({ snapshotId: "snap_abc123" });
 ```
 
-### Delete a snapshot
+## Delete a snapshot
 
-```ts
-await Snapshot.delete({ snapshotId: 'snap_abc123' });
+Remove snapshots you no longer need:
+
+```ts filename="index.ts"
+await Snapshot.delete({ snapshotId: "snap_abc123" });
 ```
 
-## Limits
+## Snapshot limits
 
-- **Expiration**: 30 days default (configurable)
-- **Storage**: $0.08/GB-month on Pro plans
+- Snapshots expire after **30 days** by default
+- You can define a custom expiration time or none at all when creating a snapshot. See the [SDK](/docs/vercel-sandbox/sdk-reference#sandbox.snapshot) and [CLI](/docs/vercel-sandbox/cli-reference#sandbox-snapshot) documentation for more details.
+- See [Pricing and Limits](/docs/vercel-sandbox/pricing#snapshot-storage) for storage costs and limits
 
-See [Pricing](/docs/vercel-sandbox/pricing) for storage costs.
+
+---
+
+[View full sitemap](/docs/sitemap)

@@ -304,11 +304,19 @@ export function handleDiscordCommand(
     }
   }
 
-  if (parsed.type === "stop") {
+  if (parsed.type === "checkpoint") {
     return {
       handled: true,
       isPrompt: false,
-      message: "stop:sandbox",
+      message: "checkpoint:sandbox",
+    }
+  }
+
+  if (parsed.type === "opencode") {
+    return {
+      handled: true,
+      isPrompt: false,
+      message: parsed.project ? `opencode:start:${parsed.project}` : "opencode:start",
     }
   }
 

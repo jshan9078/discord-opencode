@@ -34,6 +34,20 @@ export function buildApplicationCommands(): DiscordApplicationCommand[] {
       ],
     },
     {
+      name: "opencode",
+      description: "Start or resume an OpenCode session",
+      type: 1,
+      options: [
+        {
+          type: 3,
+          name: "project",
+          description: "GitHub repo (owner/repo)",
+          required: false,
+          autocomplete: true,
+        },
+      ],
+    },
+    {
       name: "providers",
       description: "List providers and auth status",
       type: 1,
@@ -182,8 +196,8 @@ export function buildApplicationCommands(): DiscordApplicationCommand[] {
       ],
     },
     {
-      name: "stop",
-      description: "Stop the sandbox for this thread",
+      name: "checkpoint",
+      description: "Save thread state as a resumable checkpoint",
       type: 1,
     },
   ]

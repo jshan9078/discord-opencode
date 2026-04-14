@@ -17,7 +17,8 @@ export type ParsedCommand =
   | { type: "auth_connect"; providerId: string; methodHint?: string }
   | { type: "auth_set_key"; providerId: string }
   | { type: "auth_disconnect"; providerId: string }
-  | { type: "stop" }
+  | { type: "opencode"; project?: string }
+  | { type: "checkpoint" }
   | { type: "help" }
   | { type: "invalid"; message: string }
   | { type: "prompt"; text: string }
@@ -70,6 +71,8 @@ function isLikelyCommandWord(firstWord: string): boolean {
     "models",
     "use",
     "auth",
+    "opencode",
+    "checkpoint",
     "project",
     "help",
     "list",
@@ -211,8 +214,18 @@ export function parseDiscordCommand(input: string): ParsedCommand {
     return { type: "auth_disconnect", providerId: tokens[2] }
   }
 
-  if (lower[0] === "stop") {
-    return { type: "stop" }
+  if (lower[0] === "checkpoint") {
+    return { type: "checkpoint" }
+  }
+
+  if (lower[0] === "opencode") {
+    if (tokens.length === 1) {
+      return { type: "opencode" }
+    }
+    if (tokens.length === 2) {
+      return { type: "opencode", project: tokens[1] }
+    }
+    return { type: "invalid", message: "Usage: opencode [project]" }
   }
 
   if (lower[0] === "help") {
@@ -243,5 +256,7 @@ export function commandHelpText(): string {
     "- auth connect <provider> [method]",
     "- auth set-key <provider>",
     "- auth disconnect <provider>",
+    "- opencode [project]",
+    "- checkpoint",
   ].join("\n")
 }

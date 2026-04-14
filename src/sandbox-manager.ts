@@ -136,6 +136,46 @@ export class SandboxManager {
     }
   }
 
+  async createFromSnapshot(
+    channelId: string,
+    snapshotId: string,
+    repoUrl?: string,
+    branch = "main",
+  ): Promise<SandboxContext> {
+    const sandbox = await Sandbox.create({
+      runtime: this.options.runtime,
+      resources: { vcpus: this.options.vcpus },
+      timeout: this.options.timeout,
+      ports: [OPENCODE_PORT],
+      source: {
+        type: "snapshot",
+        snapshotId,
+      },
+    })
+
+    if (repoUrl) {
+      await this.cloneRepoIntoSandbox(sandbox, repoUrl, branch)
+    }
+
+    const context = await this.ensureOpenCodeServer(sandbox)
+    this.cache.set(channelId, context)
+    return context
+  }
+
+  async createRawBaselineSnapshot(channelId: string, expirationMs?: number): Promise<{ snapshotId: string }> {
+    const sandbox = await this.createSandbox(channelId)
+    await this.ensureOpenCodeInstalled(sandbox)
+    await this.ensureGitHubCliInstalled(sandbox)
+    await this.injectUserConfig(sandbox)
+    const snapshot = await sandbox.snapshot(
+      expirationMs !== undefined
+        ? { expiration: expirationMs }
+        : undefined,
+    )
+    this.cache.delete(channelId)
+    return { snapshotId: snapshot.snapshotId }
+  }
+
   private async createSandbox(channelId: string, repoUrl?: string, branch = "main"): Promise<Sandbox> {
     const name = this.getSandboxName(channelId)
 
@@ -205,6 +245,28 @@ export class SandboxManager {
       opencodeBaseUrl,
       opencodePassword: password,
     }
+  }
+
+  private async cloneRepoIntoSandbox(sandbox: Sandbox, repoUrl: string, branch = "main"): Promise<void> {
+    const repoName = this.extractRepoName(repoUrl)
+    const target = `/workspace/${repoName}`
+
+    const checkout = [
+      `rm -rf ${shellEscape(target)}`,
+      `git clone --depth=1 --branch ${shellEscape(branch)} ${shellEscape(repoUrl)} ${shellEscape(target)}`,
+    ].join(" && ")
+
+    await this.ensureGitAskPassConfigured(sandbox)
+    await sandbox.runCommand({
+      cmd: "bash",
+      args: ["-lc", `${this.buildCredentialsEnv()} GIT_ASKPASS=/tmp/git-askpass.sh GIT_TERMINAL_PROMPT=0 ${checkout}`],
+    })
+  }
+
+  private extractRepoName(repoUrl: string): string {
+    const cleaned = repoUrl.replace(/\.git$/, "")
+    const part = cleaned.split("/").pop()
+    return part && part.length > 0 ? part : "project"
   }
 
   private getOpenCodeBaseUrl(sandbox: Sandbox): string {
@@ -750,6 +812,10 @@ function isSandboxStoppedError(error: unknown): boolean {
   }
 
   return (maybeError.message || "").includes("sandbox_stopped")
+}
+
+function shellEscape(input: string): string {
+  return `'${input.replace(/'/g, `'\\''`)}'`
 }
 
 export function getSandboxManager(): SandboxManager {

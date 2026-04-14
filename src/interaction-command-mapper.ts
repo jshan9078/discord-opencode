@@ -97,8 +97,12 @@ export function mapInteractionCommandToText(
       const provider = optionValue(data, "provider") || ""
       return { type: "command", text: `auth disconnect ${provider}`.trim() }
     }
-    case "stop": {
-      return { type: "command", text: "stop" }
+    case "opencode": {
+      const project = optionValue(data, "project")
+      return { type: "command", text: project ? `opencode ${project}` : "opencode" }
+    }
+    case "checkpoint": {
+      return { type: "command", text: "checkpoint" }
     }
     default:
       return { type: "command", text: "help" }

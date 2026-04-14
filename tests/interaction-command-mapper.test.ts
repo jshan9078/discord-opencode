@@ -30,5 +30,20 @@ describe("mapInteractionCommandToText", () => {
       type: "command",
       text: "use provider openai",
     })
+
+    expect(
+      mapInteractionCommandToText({
+        name: "opencode",
+        options: [{ name: "project", type: 3, value: "anomalyco/opencode" }],
+      }),
+    ).toEqual({
+      type: "command",
+      text: "opencode anomalyco/opencode",
+    })
+
+    expect(mapInteractionCommandToText({ name: "checkpoint" })).toEqual({
+      type: "command",
+      text: "checkpoint",
+    })
   })
 })

@@ -15,8 +15,8 @@ OpenCode Server        →    Runs in isolated sandbox
 You (Discord)          ←    Streams results back
 ```
 
-- **Slash commands** for all interactions (`/ask`, `/project`, `/providers`, etc.)
-- **Per-channel sandboxes** - each Discord channel gets its own persistent sandbox
+- **Slash commands** for session + coding workflows (`/opencode`, `/ask`, `/checkpoint`, etc.)
+- **Thread-bound sessions** - each working thread maps to one sandbox + one OpenCode session
 - **Real-time streaming** - watch the agent work as events arrive
 - **No always-on host** - fully serverless on Vercel
 
@@ -25,21 +25,21 @@ You (Discord)          ←    Streams results back
 Vercel Sandboxes provide isolated, ephemeral environments for running code. When you interact with the Discord bridge, here's what happens:
 
 ```
-1. Discord Command → Vercel Function receives your request
-2. Sandbox Allocation → A sandbox is assigned to your channel (or created if new)
-3. OpenCode Boots → The sandbox environment initializes with your config
-4. Task Execution → OpenCode runs your coding request in the isolated sandbox
-5. Response Streaming → Results stream back to Discord in real-time
-6. Sandbox Persistence → Sandboxes remain warm for a period, then cold-start fresh next time
+1. /opencode in channel → create/select a working thread session
+2. Session restore/start → sandbox is resumed from snapshot baseline or project checkpoint
+3. OpenCode boots in sandbox → bridge connects via SDK
+4. /ask in thread → prompt is sent to the bound OpenCode session
+5. Streaming response → events and final result posted back to Discord
+6. /checkpoint (optional) → current sandbox is snapshotted for future resume
 ```
 
 **Key concepts:**
 
-- **Per-channel sandboxes** - Each Discord channel gets its own persistent sandbox that survives across requests. Your tools, git state, and working directory persist until the sandbox is reclaimed.
+- **Thread invariants** - One thread maps to one sandbox + one OpenCode session (+ one project entry when project mode is used).
 - **Cold starts** - If a sandbox is cold, expect a brief delay (5-30 seconds) while it initializes. Warm sandboxes respond instantly.
 - **Isolation** - Each sandbox is fully isolated with its own filesystem, environment, and processes. No cross-contamination between channels.
-- **Automatic lifecycle** - Vercel manages sandbox creation, warming, and cleanup. Sandboxes are reclaimed after periods of inactivity.
-- **State persistence** - Files created in the sandbox persist during its lifetime. Clone repos, install dependencies, create files—all saved until the sandbox is reclaimed.
+- **Snapshot-driven continuity** - Raw baseline snapshots bootstrap fast starts; project snapshots power resume.
+- **Automatic lifecycle** - Vercel manages sandbox runtime lifecycle; the bridge persists session metadata in Blob.
 
 ## Quick Start
 
@@ -70,7 +70,7 @@ That will provision Blob storage and inject:
 BLOB_READ_WRITE_TOKEN
 ```
 
-The bridge uses Blob to store the durable provider registry snapshot for `/providers`, `/models`, and `/ask`.
+The bridge uses Blob for durable runtime metadata, including provider registry snapshots, thread/session bindings, and project workspace entries.
 
 ### 4. Configure Environment Variables
 
@@ -84,7 +84,7 @@ These values live in Vercel and are used by the deployed app:
 | `DISCORD_PUBLIC_KEY` | Your Discord public key (hex) |
 | `DISCORD_BOT_TOKEN` | Your Discord bot token (needed for thread creation) |
 | `GITHUB_TOKEN` | GitHub personal access token (needs `repo`, `read:user` scopes) |
-| `BLOB_READ_WRITE_TOKEN` | Vercel Blob token for provider registry storage |
+| `BLOB_READ_WRITE_TOKEN` | Vercel Blob token for runtime/session/snapshot metadata |
 | `SESSION_BASE_DIR` | Optional session/config storage path. Recommended for serverless: `/tmp/opencode-chat-bridge` |
 
 **Provider API keys** (optional):
@@ -102,7 +102,7 @@ pnpm tsx scripts/sync-config-to-blob.ts
 
 This script uploads `~/.config/opencode` (excluding `node_modules` and `.git`) to private Vercel Blob.
 
-`BLOB_READ_WRITE_TOKEN` is used to store the durable provider registry snapshot that powers `/providers`, `/models`, and `/ask`.
+`BLOB_READ_WRITE_TOKEN` is required for durable provider registry, thread runtime state, and workspace/snapshot index data.
 
 **Serverless storage** (recommended on Vercel):
 - `SESSION_BASE_DIR=/tmp/opencode-chat-bridge`
@@ -181,7 +181,27 @@ If you have not set global defaults yet, the thread will tell you to do that fir
 
 On each `/ask`, the bridge sends the resolved provider/model selection directly to OpenCode for that prompt.
 
-### 9. Set Provider Credentials
+### 9. Start a Session in Discord
+
+In a normal channel (not a thread), start a session:
+
+```text
+/opencode
+```
+
+Or start/resume project mode:
+
+```text
+/opencode owner/repo
+```
+
+Then use `/ask` inside the created/linked thread.
+
+Rules:
+- `/ask` works only in threads
+- `/opencode` works only in normal channels
+
+### 10. Set Provider Credentials
 
 **Option 1: API Keys (env vars)**
 ```bash
@@ -201,7 +221,9 @@ ANTHROPIC_API_KEY=sk-ant-... # Anthropic
 
 | Command | Description |
 |---------|-------------|
-| `/ask <prompt>` | Send a coding request |
+| `/opencode [project]` | Start empty session or pick resume/new for a project |
+| `/ask <prompt>` | Send a coding request (thread only) |
+| `/checkpoint` | Snapshot current thread session for resume |
 | `/project select` | Pick a repo/branch via menu |
 | `/project set <url> [branch]` | Set project directly |
 | `/project show` | View current project |
@@ -216,6 +238,8 @@ ANTHROPIC_API_KEY=sk-ant-... # Anthropic
 | `/auth-connect <provider>` | OAuth flow for providers (e.g., openai) |
 
 Final `/ask` replies include a Discord embed footer with the model used, token usage, approximate context usage, and cost when OpenCode reports them.
+
+`/update` also refreshes the raw baseline snapshot when stale (without invalidating existing project snapshots).
 
 ## Pricing
 Everything is free out of the box if you use the Vercel hobby tier.

@@ -1510,6 +1510,42 @@ async function getRawBaselineStatus(maxAgeMs = 24 * 60 * 60_000): Promise<{ snap
   return { snapshotId: baseline.snapshotId, stale }
 }
 
+async function processUpdateInteraction(interaction: Interaction): Promise<void> {
+  try {
+    const { refreshProviderRegistry } = await import("../../src/provider-registry-store.js")
+
+    const result = await refreshProviderRegistry()
+    const rawStatus = await getRawBaselineStatus()
+    let rawSnapshotId = rawStatus.snapshotId || ""
+    let rawAction = "unchanged"
+    if (rawStatus.stale) {
+      try {
+        rawSnapshotId = await refreshRawBaselineSnapshot()
+        rawAction = "refreshed"
+      } catch (error) {
+        rawAction = "failed"
+        console.error("Raw baseline refresh failed:", error)
+      }
+    }
+
+    const message = `${result.created ? "Created" : "Updated"} provider registry.\n` +
+      `Providers: ${result.providerCount}\n` +
+      `Models: ${result.modelCount}` +
+      (rawSnapshotId
+        ? `\nRaw baseline (${rawAction}): ${rawSnapshotId}`
+        : `\nRaw baseline (${rawAction}).`)
+
+    const chunks = splitDiscordMessage(message)
+    await sendFollowup(interaction.application_id, interaction.token, chunks[0] || "Updated.")
+    for (const chunk of chunks.slice(1)) {
+      await sendFollowup(interaction.application_id, interaction.token, chunk)
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error"
+    await sendFollowup(interaction.application_id, interaction.token, `Update failed: ${message}`)
+  }
+}
+
 async function processAskInteraction(interaction: Interaction, prompt: string): Promise<void> {
   let lockRunId: string | undefined
   let lockThreadId: string | undefined
@@ -2222,31 +2258,8 @@ export default async function handler(
     }
 
     if (mapped.text === "update") {
-      const { refreshProviderRegistry } = await import("../../src/provider-registry-store.js")
-
-      const result = await refreshProviderRegistry()
-      const rawStatus = await getRawBaselineStatus()
-      let rawSnapshotId = rawStatus.snapshotId || ""
-      let rawAction = "unchanged"
-      if (rawStatus.stale) {
-        try {
-          rawSnapshotId = await refreshRawBaselineSnapshot()
-          rawAction = "refreshed"
-        } catch (error) {
-          rawAction = "failed"
-          console.error("Raw baseline refresh failed:", error)
-        }
-      }
-      await sendChunkedInteractionResponse(
-        interaction,
-        res,
-        `${result.created ? "Created" : "Updated"} provider registry.\n` +
-          `Providers: ${result.providerCount}\n` +
-          `Models: ${result.modelCount}` +
-          (rawSnapshotId
-            ? `\nRaw baseline (${rawAction}): ${rawSnapshotId}`
-            : `\nRaw baseline (${rawAction}).`),
-      )
+      waitUntil(processUpdateInteraction(interaction))
+      await sendNodeResponse(res, json({ type: 5 }))
       return
     }
 

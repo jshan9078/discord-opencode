@@ -56,8 +56,21 @@ async function readRunLock(threadId: string): Promise<ThreadRunLock | undefined>
   }
 }
 
-async function writeRunLock(threadId: string, runLock: ThreadRunLock): Promise<void> {
+async function writeRunLock(
+  threadId: string,
+  runLock: ThreadRunLock,
+  caller: string,
+): Promise<void> {
   requireBlobToken()
+  const existingLock = await readRunLock(threadId).catch(() => undefined)
+  console.info("lock.write", {
+    threadId,
+    caller,
+    newRunId: runLock.runId,
+    newExpiresAt: runLock.expiresAt,
+    existingRunId: existingLock?.runId,
+    existingExpiresAt: existingLock?.expiresAt,
+  })
   await put(threadLockPath(threadId), JSON.stringify(runLock), {
     access: "private",
     allowOverwrite: true,
@@ -189,6 +202,13 @@ export class ThreadRuntimeStore {
   ): Promise<{ acquired: boolean; runId?: string; duplicate?: boolean }> {
     const current = await this.get(threadId)
     const now = Date.now()
+    console.info("lock.acquire_check", {
+      threadId,
+      hasExistingLock: Boolean(current.runLock),
+      existingExpiresAt: current.runLock?.expiresAt,
+      expiresAtThreshold: now,
+      wouldBlock: current.runLock && current.runLock.expiresAt > now,
+    })
     if (current.runLock && current.runLock.expiresAt > now) {
       if (interactionId && current.runLock.interactionId && current.runLock.interactionId === interactionId) {
         return { acquired: false, duplicate: true }
@@ -202,7 +222,7 @@ export class ThreadRuntimeStore {
       interactionId,
       startedAt: now,
       expiresAt: now + ttlMs,
-    })
+    }, "acquireRunLock")
 
     const confirmed = await this.get(threadId)
     if (confirmed.runLock?.runId !== runId) {
@@ -223,13 +243,19 @@ export class ThreadRuntimeStore {
       ...current.runLock,
       startedAt: current.runLock.startedAt,
       expiresAt: now + ttlMs,
-    })
+    }, "refreshRunLock")
 
     return true
   }
 
   async releaseRunLock(threadId: string, runId: string): Promise<void> {
     const current = await this.get(threadId)
+    console.info("lock.release", {
+      threadId,
+      runId,
+      currentLockRunId: current.runLock?.runId,
+      wouldDelete: current.runLock && current.runLock.runId === runId,
+    })
     if (!current.runLock || current.runLock.runId !== runId) {
       return
     }

@@ -2271,12 +2271,22 @@ async function processAskInteraction(interaction: Interaction, prompt: string, o
     const runtimeState = await runtimeStore.get(channelId)
 
     if (!runtimeState.sandboxId) {
-      await sendFollowup(
-        interaction.application_id,
-        interaction.token,
-        "No active session in this thread. Run `/opencode` to start one.",
-      )
-      return
+      logAskStage("ask_no_session_autostart", { threadId: channelId, interactionId: interaction.id })
+      const rawBaselineSnapshotId = await ensureRawBaselineSnapshot()
+      const threadId = await createThreadFromChannel(channelId, "OpenCode Session")
+      if (!threadId) {
+        await sendFollowup(interaction.application_id, interaction.token, "Failed to create thread for /ask.")
+        return
+      }
+      await startThreadSession(threadId, undefined, "main", {
+        snapshotId: rawBaselineSnapshotId,
+        resetSessions: true,
+      })
+      runtimeState = await runtimeStore.get(threadId)
+      if (!runtimeState.sandboxId) {
+        await sendFollowup(interaction.application_id, interaction.token, "Failed to start session for /ask.")
+        return
+      }
     }
 
     const statusMessage = "Processing..."

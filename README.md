@@ -247,10 +247,10 @@ It relies on whatever subscription / providers you have on OpenCode.
 
 ## Documentation
 
-- [Docs Index](./docs/index.md) - All documentation
-- [Architecture](./docs/architecture/overview.md) - How it works
 - [Slash Commands](./docs/commands/slash-commands.md) - Command reference
 - [Auth Overview](./docs/auth/overview.md) - Credential management
+- [Vercel Blob CLI](./docs/vercel-blob-cli.md) - Blob storage reference
+- [Vercel Sandbox Research](./docs/research/vercel-sandbox/) - Sandbox deep dive
 
 ## License
 

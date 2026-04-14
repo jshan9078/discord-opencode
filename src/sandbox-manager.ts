@@ -252,9 +252,44 @@ export class SandboxManager {
     ].join(" && ")
 
     await this.ensureGitAskPassConfigured(sandbox)
-    await sandbox.runCommand({
+    console.log(`[SandboxManager] Cloning repo into ${target}: ${repoUrl}#${branch}`)
+    const result = await sandbox.runCommand({
       cmd: "bash",
       args: ["-lc", `${this.buildCredentialsEnv()} GIT_ASKPASS=/tmp/git-askpass.sh GIT_TERMINAL_PROMPT=0 ${checkout}`],
+    })
+
+    const stdout = await result.stdout()
+    const stderr = await result.stderr()
+    if (result.exitCode !== 0) {
+      console.error("[SandboxManager] Repo clone failed", {
+        repoUrl,
+        branch,
+        target,
+        exitCode: result.exitCode,
+        stdout,
+        stderr,
+      })
+      throw new Error(`Failed to clone repo into sandbox: ${stderr || stdout || `exit ${result.exitCode}`}`)
+    }
+
+    console.log("[SandboxManager] Repo clone done", {
+      repoUrl,
+      branch,
+      target,
+      stdout,
+      stderr,
+    })
+
+    const lsResult = await sandbox.runCommand({
+      cmd: "bash",
+      args: ["-lc", `pwd && ls -la ${shellEscape(target)} | sed -n '1,40p'`],
+    })
+    console.log("[SandboxManager] Repo clone verify", {
+      repoUrl,
+      target,
+      stdout: await lsResult.stdout(),
+      stderr: await lsResult.stderr(),
+      exitCode: lsResult.exitCode,
     })
   }
 

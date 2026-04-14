@@ -11,7 +11,7 @@ export interface ThreadRunLock {
 export interface ThreadRuntimeState {
   sandboxId?: string
   opencodePassword?: string
-  sessionByProfile?: Record<string, string>
+  sessionId?: string
   runLock?: ThreadRunLock
   updatedAt: number
 }
@@ -26,10 +26,6 @@ function threadPath(threadId: string): string {
   return `runtime/threads/${threadId}.json`
 }
 
-function profileKey(providerId: string, modelId: string): string {
-  return `${providerId}:${modelId}`
-}
-
 export class ThreadRuntimeStore {
   async get(threadId: string): Promise<ThreadRuntimeState> {
     requireBlobToken()
@@ -37,18 +33,19 @@ export class ThreadRuntimeStore {
     try {
       const result = await get(threadPath(threadId), { access: "private" })
       if (!result || !("stream" in result)) {
-        return { updatedAt: Date.now(), sessionByProfile: {} }
+        return { updatedAt: Date.now() }
       }
 
       const text = await new Response(result.stream).text()
-      const parsed = JSON.parse(text) as Partial<ThreadRuntimeState>
+      const parsed = JSON.parse(text) as Partial<ThreadRuntimeState> & { sessionByProfile?: Record<string, string> }
+      const legacySessionId = parsed.sessionByProfile && typeof parsed.sessionByProfile === "object"
+        ? Object.values(parsed.sessionByProfile).find((value): value is string => typeof value === "string" && value.length > 0)
+        : undefined
 
       return {
         sandboxId: typeof parsed.sandboxId === "string" ? parsed.sandboxId : undefined,
         opencodePassword: typeof parsed.opencodePassword === "string" ? parsed.opencodePassword : undefined,
-        sessionByProfile: parsed.sessionByProfile && typeof parsed.sessionByProfile === "object"
-          ? parsed.sessionByProfile
-          : {},
+        sessionId: typeof parsed.sessionId === "string" ? parsed.sessionId : legacySessionId,
         runLock: parsed.runLock && typeof parsed.runLock === "object"
           ? {
               runId: String(parsed.runLock.runId || ""),
@@ -59,7 +56,7 @@ export class ThreadRuntimeStore {
         updatedAt: Number(parsed.updatedAt || Date.now()),
       }
     } catch {
-      return { updatedAt: Date.now(), sessionByProfile: {} }
+      return { updatedAt: Date.now() }
     }
   }
 
@@ -69,7 +66,6 @@ export class ThreadRuntimeStore {
       threadPath(threadId),
       JSON.stringify({
         ...state,
-        sessionByProfile: state.sessionByProfile || {},
         updatedAt: Date.now(),
       }),
       {
@@ -85,7 +81,6 @@ export class ThreadRuntimeStore {
     const next: ThreadRuntimeState = {
       ...current,
       ...patch,
-      sessionByProfile: patch.sessionByProfile || current.sessionByProfile || {},
       updatedAt: Date.now(),
     }
     await this.set(threadId, next)
@@ -105,34 +100,25 @@ export class ThreadRuntimeStore {
     })
   }
 
-  async getSessionForProfile(threadId: string, providerId: string, modelId: string): Promise<string | undefined> {
+  async getSession(threadId: string): Promise<string | undefined> {
     const state = await this.get(threadId)
-    return state.sessionByProfile?.[profileKey(providerId, modelId)]
+    return state.sessionId
   }
 
-  async setSessionForProfile(
-    threadId: string,
-    providerId: string,
-    modelId: string,
-    sessionId: string,
-  ): Promise<void> {
+  async setSession(threadId: string, sessionId: string): Promise<void> {
     const state = await this.get(threadId)
-    const key = profileKey(providerId, modelId)
     await this.set(threadId, {
       ...state,
-      sessionByProfile: {
-        ...(state.sessionByProfile || {}),
-        [key]: sessionId,
-      },
+      sessionId,
       updatedAt: Date.now(),
     })
   }
 
-  async clearSessions(threadId: string): Promise<void> {
+  async clearSession(threadId: string): Promise<void> {
     const state = await this.get(threadId)
     await this.set(threadId, {
       ...state,
-      sessionByProfile: {},
+      sessionId: undefined,
       updatedAt: Date.now(),
     })
   }

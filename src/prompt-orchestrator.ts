@@ -2,9 +2,10 @@
  * Orchestrates the full prompt flow: auth, session, execution, event streaming.
  * The main entry point for processing /ask commands.
  */
+import { randomUUID } from "crypto"
 import type { CredentialStore } from "./credential-store.js"
 import { ensureProviderAuth } from "./auth-bootstrap.js"
-import { resolveSessionForActiveProfile } from "./session-manager.js"
+import { resolveThreadSession } from "./session-manager.js"
 import { relaySessionEvents, type EventRelaySink } from "./event-relay.js"
 import type { ProviderRegistry } from "./provider-registry.js"
 import { syncProviderRegistry, type OpencodeClient } from "./opencode-client.js"
@@ -93,19 +94,20 @@ export async function executePromptForChannel(
 
   let sessionId: string
   if (options.forceNewSession) {
-    const profileKey = `${providerId}:${modelId}`
     const created = await client.session.create({
-      body: { title: `discord-${threadId}-${profileKey}` },
+      body: { title: `discord-${threadId}` },
     })
     sessionId = created.id
-    await runtimeStore.setSessionForProfile(threadId, providerId, modelId, sessionId)
+    await runtimeStore.setSession(threadId, sessionId)
   } else {
-    sessionId = await resolveSessionForActiveProfile(client, runtimeStore, threadId, providerId, modelId)
+    sessionId = await resolveThreadSession(client, runtimeStore, threadId)
   }
 
+  const correlationToken = `bridge-correlation:${randomUUID()}`
   const relayPromise = relaySessionEvents(client, sink, sessionId, {
     maxIdleMs: 45_000,
     maxTotalMs: 10 * 60_000,
+    correlationToken,
   })
   const finalPrompt = options.recoveryContext
     ? [
@@ -128,6 +130,7 @@ export async function executePromptForChannel(
         providerID: providerId,
         modelID: modelId,
       },
+      system: correlationToken,
       parts: [{ type: "text", text: finalPrompt }],
     },
   })

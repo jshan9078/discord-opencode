@@ -27,12 +27,21 @@ function withOptionalAuth(password?: string): ((input: RequestInfo | URL, init?:
 
   const auth = `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const headers = new Headers(init?.headers)
+    const requestHeaders = input instanceof Request ? input.headers : undefined
+    const headers = new Headers(requestHeaders)
+    if (init?.headers) {
+      const initHeaders = new Headers(init.headers)
+      for (const [key, value] of initHeaders.entries()) {
+        headers.set(key, value)
+      }
+    }
     headers.set("Authorization", auth)
-    return await fetch(input, {
-      ...init,
-      headers,
-    })
+
+    if (input instanceof Request) {
+      return await fetch(new Request(input, { ...init, headers }))
+    }
+
+    return await fetch(input, { ...init, headers })
   }
 }
 
@@ -62,6 +71,7 @@ export interface OpencodeClient {
       path: { id: string }
       body: {
         model: { providerID: string; modelID: string }
+        system?: string
         parts: Array<{ type: "text"; text: string }>
       }
     }): Promise<void>

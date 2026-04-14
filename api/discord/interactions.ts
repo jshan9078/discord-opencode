@@ -657,12 +657,22 @@ function hasProviderApiKey(providerId: string): boolean {
 }
 
 async function sendFinalAskResponse(
-  interaction: Interaction,
+  applicationId: string,
+  token: string,
   threadId: string | undefined,
   text: string,
 ): Promise<void> {
   const clipped = text.length > 1900 ? `${text.slice(0, 1899)}...` : text
-  await sendFollowup(interaction.application_id, interaction.token, clipped || "Done.", undefined, threadId)
+  await sendFollowup(applicationId, token, clipped || "Done.", undefined, threadId)
+}
+
+interface AskRunRequest {
+  interactionId: string
+  applicationId: string
+  token: string
+  channelId: string
+  userId: string
+  prompt: string
 }
 
 function parseTodoItems(value: unknown): Array<{ content: string; status: string }> {
@@ -1216,7 +1226,7 @@ async function startThreadSession(
 
   await runtimeStore.setSandbox(threadId, context.sandboxId, context.opencodePassword)
   if (options?.resetSessions !== false) {
-    await runtimeStore.clearSessions(threadId)
+    await runtimeStore.clearSession(threadId)
   }
 
   const threadState = channelStateStore.get(threadId)
@@ -1693,6 +1703,7 @@ async function processDeleteInteraction(interaction: Interaction, channelId: str
     const runtime = await runtimeStore.get(channelId)
 
     if (!runtime.sandboxId) {
+      await runtimeStore.clear(channelId)
       await sendFollowup(interaction.application_id, interaction.token, "No active sandbox in this thread.")
       return
     }
@@ -1719,10 +1730,7 @@ async function processDeleteInteraction(interaction: Interaction, channelId: str
   }
 }
 
-async function processAskInteraction(interaction: Interaction, prompt: string): Promise<void> {
-  let lockRunId: string | undefined
-  let lockThreadId: string | undefined
-  let lockStore: { releaseRunLock(threadId: string, runId: string): Promise<void>; refreshRunLock(threadId: string, runId: string, ttlMs?: number): Promise<boolean> } | undefined
+async function executeAskRun(run: AskRunRequest): Promise<void> {
   try {
   const [
     { ChannelStateStore },
@@ -1748,16 +1756,12 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
       import("../../src/thread-runtime-store.js"),
     ])
 
-    const channelId = interaction.channel_id
-    const messageId = interaction.message?.id
-    const userId = getInteractionUserId(interaction)
+    const channelId = run.channelId
+    const userId = run.userId
+    const prompt = run.prompt
 
     if (!channelId || !userId) {
-      await sendFollowup(
-        interaction.application_id,
-        interaction.token,
-        !channelId ? "Missing channel ID." : "Missing user ID.",
-      )
+      await sendFollowup(run.applicationId, run.token, !channelId ? "Missing channel ID." : "Missing user ID.")
       return
     }
 
@@ -1767,20 +1771,11 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
     const commandIsInThread = await isThreadChannel(channelId)
 
   if (!commandIsInThread) {
-    await sendFollowup(
-      interaction.application_id,
-      interaction.token,
-      "Run `/opencode` first in a channel to start or resume a session.",
-    )
+    await sendFollowup(run.applicationId, run.token, "Run `/opencode` first in a channel to start or resume a session.")
     return
   }
 
   const effectiveThreadId = channelId
-  await updateOriginalResponse(
-    interaction.application_id,
-    interaction.token,
-    "Working...",
-  )
 
   const conversationId = effectiveThreadId
   const conversationState = stateStore.get(conversationId)
@@ -1790,7 +1785,6 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
   const workspaceStore = new WorkspaceEntryStore()
   let threadBinding = await workspaceStore.getThreadBinding(conversationId)
   const threadRuntimeStore = new ThreadRuntimeStore()
-  lockStore = threadRuntimeStore
   let threadRuntimeState = await threadRuntimeStore.get(conversationId)
 
   if (!threadBinding && threadRuntimeState.sandboxId) {
@@ -1805,8 +1799,8 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
 
   if (threadBinding && threadBinding.userId !== userId) {
     await sendFollowup(
-      interaction.application_id,
-      interaction.token,
+      run.applicationId,
+      run.token,
       "This thread is bound to another user session. Start your own with `/opencode` in a channel.",
       undefined,
       effectiveThreadId,
@@ -1864,40 +1858,14 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
 
   if (!threadRuntimeState.sandboxId) {
     await sendFollowup(
-      interaction.application_id,
-      interaction.token,
+      run.applicationId,
+      run.token,
       "No active thread session. Run `/opencode` from a channel first.",
       undefined,
       effectiveThreadId,
     )
     return
   }
-  let lock = await threadRuntimeStore.acquireRunLock(conversationId, 5 * 60_000, interaction.id)
-  if (!lock.acquired || !lock.runId) {
-    if (lock.duplicate) {
-      return
-    }
-
-    const existingState = await threadRuntimeStore.get(conversationId)
-    const existingLock = existingState.runLock
-    if (existingLock && Date.now() > existingLock.expiresAt) {
-      await threadRuntimeStore.releaseRunLock(conversationId, existingLock.runId)
-      lock = await threadRuntimeStore.acquireRunLock(conversationId, 90_000, interaction.id)
-    }
-  }
-
-  if (!lock.acquired || !lock.runId) {
-    await sendFollowup(
-      interaction.application_id,
-      interaction.token,
-      "Another /ask run is already in progress for this thread. Wait for it to finish, or run /delete to reset the thread session.",
-      undefined,
-      effectiveThreadId,
-    )
-    return
-  }
-  lockRunId = lock.runId
-  lockThreadId = conversationId
 
   // Selection semantics:
   // - If /ask is invoked inside a thread, honor thread overrides.
@@ -1923,8 +1891,8 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
   }
   if (!selection?.providerId) {
     await sendFollowup(
-      interaction.application_id,
-      interaction.token,
+      run.applicationId,
+      run.token,
       "No default provider configured. Run `/use-provider <provider>` in any normal channel first.",
       undefined,
       effectiveThreadId,
@@ -1933,7 +1901,7 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
   }
 
   if (threadBinding?.project && threadBinding.workspaceEntryId && !threadBinding.hasCustomName) {
-    const isFirstPrompt = !threadRuntimeState.sessionByProfile || Object.keys(threadRuntimeState.sessionByProfile).length === 0
+    const isFirstPrompt = !threadRuntimeState.sessionId
     if (isFirstPrompt) {
       await workspaceStore.updateEntry(threadBinding.userId, threadBinding.project, threadBinding.workspaceEntryId, {
         name: truncateLabel(prompt, 72),
@@ -1948,8 +1916,8 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
 
     if (!selection?.modelId) {
     await sendFollowup(
-      interaction.application_id,
-      interaction.token,
+      run.applicationId,
+      run.token,
       `No model configured for provider '${selection.providerId}'. Run /use-model <model> in any normal channel first.`,
       undefined,
       effectiveThreadId,
@@ -1986,8 +1954,8 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
     } catch (error) {
       console.error("Failed to get/create sandbox:", error)
       await sendFollowup(
-        interaction.application_id,
-        interaction.token,
+        run.applicationId,
+        run.token,
         `Failed to create sandbox: ${error instanceof Error ? error.message : "Unknown error"}`,
       )
       return
@@ -2023,19 +1991,15 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
   // Warn user about lost local changes if sandbox expired
     if (isNewSandbox && repoUrl) {
     await sendFollowup(
-      interaction.application_id,
-      interaction.token,
+      run.applicationId,
+      run.token,
       "⚠️ **Sandbox expired** - A new session was started. Your repository was cloned fresh from GitHub.\n\n> **Note:** Any uncommitted local changes in the previous session have been lost. Remember to commit and push your work before the sandbox expires!",
       undefined,
       effectiveThreadId,
     )
   }
 
-    const hadExistingSession = Boolean(await threadRuntimeStore.getSessionForProfile(
-      conversationId,
-      selection.providerId,
-      selection.modelId,
-    ))
+    const hadExistingSession = Boolean(await threadRuntimeStore.getSession(conversationId))
 
     const recoveryContext = (isNewSandbox || !hadExistingSession)
       ? await getRecoveryContext(stateStore, conversationId, prompt)
@@ -2081,8 +2045,8 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
       }
 
       const messageId = await sendFollowup(
-        interaction.application_id,
-        interaction.token,
+        run.applicationId,
+        run.token,
         content,
         undefined,
         threadIdForFollowups,
@@ -2128,8 +2092,8 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
 
         const chunk = remaining.slice(0, ASSISTANT_MESSAGE_LIMIT)
         const messageId = await sendFollowup(
-          interaction.application_id,
-          interaction.token,
+          run.applicationId,
+          run.token,
           chunk,
           undefined,
           threadIdForFollowups,
@@ -2183,8 +2147,8 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
       }
 
       const messageId = await sendFollowup(
-        interaction.application_id,
-        interaction.token,
+        run.applicationId,
+        run.token,
         "",
         undefined,
         threadIdForFollowups,
@@ -2193,10 +2157,6 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
       if (messageId) {
         todoProgressMessageId = messageId
       }
-    }
-
-    if (lockStore && lockRunId && lockThreadId) {
-      await lockStore.refreshRunLock(lockThreadId, lockRunId)
     }
 
     const result = await executePromptForChannel(
@@ -2230,8 +2190,8 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
         const callKey = payload.toolCallId || `${payload.toolName}:${toolSequence}`
         const preview = formatToolPreview(payload.requestSummary)
         const messageId = await sendFollowup(
-          interaction.application_id,
-          interaction.token,
+          run.applicationId,
+          run.token,
           `> ⏳ Tool: ${payload.toolName}${preview}`,
           undefined,
           threadIdForFollowups,
@@ -2258,7 +2218,7 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
             return
           }
         }
-        await sendFollowup(interaction.application_id, interaction.token, content, undefined, threadIdForFollowups)
+        await sendFollowup(run.applicationId, run.token, content, undefined, threadIdForFollowups)
         if (payload.toolName === "todowrite") {
           await updateTodoProgressEmbed(payload.resultRaw)
         }
@@ -2267,13 +2227,13 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
         await updateTodoProgressEmbed(undefined, todos)
       },
       onQuestion: async (questionMessage: string) => {
-        await sendFollowup(interaction.application_id, interaction.token, `> ${questionMessage}`, undefined, threadIdForFollowups)
+        await sendFollowup(run.applicationId, run.token, `> ${questionMessage}`, undefined, threadIdForFollowups)
       },
       onPermission: async (permissionMessage: string) => {
-        await sendFollowup(interaction.application_id, interaction.token, `> ${permissionMessage}`, undefined, threadIdForFollowups)
+        await sendFollowup(run.applicationId, run.token, `> ${permissionMessage}`, undefined, threadIdForFollowups)
       },
       onError: async (errorMessage: string) => {
-        await sendFollowup(interaction.application_id, interaction.token, `> Error: ${errorMessage}`, undefined, threadIdForFollowups)
+        await sendFollowup(run.applicationId, run.token, `> Error: ${errorMessage}`, undefined, threadIdForFollowups)
       },
     },
       {
@@ -2284,7 +2244,7 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
     )
 
     if (!result.ok) {
-      await sendFollowup(interaction.application_id, interaction.token, result.message, undefined, threadIdForFollowups)
+      await sendFollowup(run.applicationId, run.token, result.message, undefined, threadIdForFollowups)
       return
     }
 
@@ -2307,16 +2267,16 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
     if (result.hadError) {
     const helpMsg = "\n\nTo switch models, use `/use-provider` and `/use-model`"
     if (text && streamedLength === 0) {
-      await sendFinalAskResponse(interaction, threadIdForFollowups, text)
-      await sendFollowup(interaction.application_id, interaction.token, helpMsg.trim(), undefined, threadIdForFollowups)
+      await sendFinalAskResponse(run.applicationId, run.token, threadIdForFollowups, text)
+      await sendFollowup(run.applicationId, run.token, helpMsg.trim(), undefined, threadIdForFollowups)
     } else if (text) {
-      await sendFollowup(interaction.application_id, interaction.token, helpMsg.trim(), undefined, threadIdForFollowups)
+      await sendFollowup(run.applicationId, run.token, helpMsg.trim(), undefined, threadIdForFollowups)
     } else {
-      await sendFinalAskResponse(interaction, threadIdForFollowups, `Error occurred.${helpMsg}`)
+      await sendFinalAskResponse(run.applicationId, run.token, threadIdForFollowups, `Error occurred.${helpMsg}`)
     }
     } else if (!text) {
       const suffix = toolEvents > 0 ? ` (${toolEvents} tool${toolEvents > 1 ? "s" : ""})` : ""
-      await sendFinalAskResponse(interaction, threadIdForFollowups, `Done${suffix}.`)
+      await sendFinalAskResponse(run.applicationId, run.token, threadIdForFollowups, `Done${suffix}.`)
     }
 
     const fileLines = (result.filesEdited || []).slice(0, 10).map((file) => `- \`${file}\``)
@@ -2325,8 +2285,8 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
       : "No file edits reported"
 
     await sendFollowup(
-      interaction.application_id,
-      interaction.token,
+      run.applicationId,
+      run.token,
       "",
       undefined,
       threadIdForFollowups,
@@ -2345,27 +2305,63 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
     )
 
     await updateOriginalResponse(
-      interaction.application_id,
-      interaction.token,
+      run.applicationId,
+      run.token,
       commandIsInThread ? "Done." : `Response posted in <#${threadIdForFollowups || channelId}>.`,
     )
   } catch (error) {
-    console.error("processAskInteraction failed:", error)
+    console.error("executeAskRun failed:", error)
     const message = (error instanceof Error
       ? error.message
       : typeof error === "object" && error !== null
         ? JSON.stringify(error)
         : String(error)).slice(0, 1500)
     try {
-      await updateOriginalResponse(interaction.application_id, interaction.token, `Request failed: ${message}`)
+      await updateOriginalResponse(run.applicationId, run.token, `Request failed: ${message}`)
     } catch (followupError) {
       console.error("Failed to send fallback followup:", followupError)
-      await sendFollowup(interaction.application_id, interaction.token, `Request failed: ${message}`)
+      await sendFollowup(run.applicationId, run.token, `Request failed: ${message}`)
     }
-  } finally {
-    if (lockStore && lockRunId && lockThreadId) {
-      await lockStore.releaseRunLock(lockThreadId, lockRunId)
+  }
+}
+
+async function processAskInteraction(interaction: Interaction, prompt: string): Promise<void> {
+  try {
+    const channelId = interaction.channel_id
+    const userId = getInteractionUserId(interaction)
+
+    if (!channelId || !userId) {
+      await sendFollowup(
+        interaction.application_id,
+        interaction.token,
+        !channelId ? "Missing channel ID." : "Missing user ID.",
+      )
+      return
     }
+
+    const commandIsInThread = await isThreadChannel(channelId)
+    if (!commandIsInThread) {
+      await sendFollowup(
+        interaction.application_id,
+        interaction.token,
+        "Run `/opencode` first in a channel to start or resume a session.",
+      )
+      return
+    }
+
+    await updateOriginalResponse(interaction.application_id, interaction.token, "Working...")
+    await executeAskRun({
+      interactionId: interaction.id,
+      applicationId: interaction.application_id,
+      token: interaction.token,
+      channelId,
+      userId,
+      prompt,
+    })
+  } catch (error) {
+    console.error("processAskInteraction failed:", error)
+    const message = error instanceof Error ? error.message : "Unknown error"
+    await updateOriginalResponse(interaction.application_id, interaction.token, `Request failed: ${message}`)
   }
 }
 

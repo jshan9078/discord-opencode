@@ -1,18 +1,15 @@
 /**
- * Resolves or creates OpenCode session for the active provider/model profile.
- * Handles session reuse across prompts in the same thread.
+ * Resolves or creates the single OpenCode session bound to a Discord thread.
  */
 import type { RuntimeClientAdapter } from "./prompt-orchestrator.js"
 import type { ThreadRuntimeStore } from "./thread-runtime-store.js"
 
-export async function resolveSessionForActiveProfile(
+export async function resolveThreadSession(
   client: RuntimeClientAdapter,
   runtimeStore: ThreadRuntimeStore,
   threadId: string,
-  providerId: string,
-  modelId: string,
 ): Promise<string> {
-  const existing = await runtimeStore.getSessionForProfile(threadId, providerId, modelId)
+  const existing = await runtimeStore.getSession(threadId)
   if (existing) {
     try {
       await client.session.get({ path: { id: existing } })
@@ -27,7 +24,7 @@ export async function resolveSessionForActiveProfile(
   })
   const sessionId = created.id
 
-  await runtimeStore.setSessionForProfile(threadId, providerId, modelId, sessionId)
+  await runtimeStore.setSession(threadId, sessionId)
 
   return sessionId
 }

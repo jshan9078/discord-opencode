@@ -43,6 +43,7 @@ export interface EventRelayOptions {
   signal?: AbortSignal
   maxIdleMs?: number
   maxTotalMs?: number
+  correlationToken?: string
 }
 
 export interface EventRelayResult {
@@ -67,6 +68,15 @@ export interface EventRelayResult {
       }
     }
   }
+}
+
+function infoMessageId(properties: Record<string, unknown> | undefined): string {
+  const info = properties?.info
+  if (info && typeof info === "object") {
+    const id = (info as Record<string, unknown>).id
+    return typeof id === "string" ? id : ""
+  }
+  return ""
 }
 
 function asText(value: unknown): string {
@@ -230,6 +240,7 @@ export async function relaySessionEvents(
   const maxIdleMs = options.maxIdleMs ?? 45_000
   const maxTotalMs = options.maxTotalMs ?? 10 * 60_000
   const terminalDrainMs = 1_500
+  const correlationToken = options.correlationToken?.trim() || ""
 
   const startedAt = Date.now()
   let lastEventAt = startedAt
@@ -280,6 +291,70 @@ export async function relaySessionEvents(
   const pendingDeltaByPart = new Map<string, string[]>()
   const toolStatusByPart = new Map<string, string>()
   let lastAssistantMessageId: string | undefined
+  let targetUserMessageId: string | undefined
+  let targetAssistantMessageId: string | undefined
+  let targetMessageCompleted = false
+  const messageIdByPart = new Map<string, string>()
+
+  const isRelevantMessageId = (messageId: string | undefined): boolean => {
+    if (!messageId) {
+      return false
+    }
+    return messageId === targetAssistantMessageId
+  }
+
+  const extractMessageIdFromPart = (part: Record<string, unknown> | undefined): string | undefined => {
+    const messageId = firstDefined(part?.messageID, part?.messageId)
+    return typeof messageId === "string" && messageId ? messageId : undefined
+  }
+
+  const discoverTargetFromMessage = (properties: Record<string, unknown> | undefined): void => {
+    const info = properties?.info
+    if (!info || typeof info !== "object") {
+      return
+    }
+
+    const row = info as Record<string, unknown>
+    const role = asText(row.role)
+    const id = asText(row.id)
+
+    if (correlationToken && role === "user" && !targetUserMessageId) {
+      const system = asText(row.system)
+      if (system.includes(correlationToken)) {
+        targetUserMessageId = id || undefined
+      }
+    }
+
+    if (role === "assistant" && id && targetUserMessageId) {
+      const parentId = asText(row.parentID)
+      if (parentId === targetUserMessageId && !targetAssistantMessageId) {
+        targetAssistantMessageId = id
+      }
+    }
+  }
+
+  const shouldProcessMessageUpdated = (properties: Record<string, unknown> | undefined): boolean => {
+    if (!correlationToken) {
+      return true
+    }
+
+    discoverTargetFromMessage(properties)
+    const info = properties?.info
+    if (!info || typeof info !== "object") {
+      return false
+    }
+
+    const row = info as Record<string, unknown>
+    const role = asText(row.role)
+    const id = asText(row.id)
+    if (!id) {
+      return false
+    }
+    if (role === "assistant" && id === targetAssistantMessageId) {
+      return true
+    }
+    return false
+  }
 
   try {
     for await (const event of events.stream) {
@@ -293,7 +368,7 @@ export async function relaySessionEvents(
 
       lastEventAt = Date.now()
 
-      if (isTerminalSessionEvent(event, hadError)) {
+      if (!correlationToken && isTerminalSessionEvent(event, hadError)) {
         sawTerminalEvent = true
         continue
       }
@@ -306,6 +381,10 @@ export async function relaySessionEvents(
         }
 
         const partType = partId ? partTypeById.get(partId) : undefined
+        const messageId = partId ? messageIdByPart.get(partId) : undefined
+        if (correlationToken && messageId && !isRelevantMessageId(messageId)) {
+          continue
+        }
         if (partType === "reasoning") {
           if (sink.onReasoningDelta) {
             await sink.onReasoningDelta({ partId: partId || "", text: delta })
@@ -337,9 +416,18 @@ export async function relaySessionEvents(
           : undefined
         const partId = asText(firstDefined(part?.id, part?.partID, event.properties?.partID))
         const partType = asText(part?.type)
+        const partMessageId = extractMessageIdFromPart(part)
 
         if (partId && partType) {
           partTypeById.set(partId, partType)
+        }
+        if (partId && partMessageId) {
+          messageIdByPart.set(partId, partMessageId)
+        }
+
+        if (correlationToken && partMessageId && !isRelevantMessageId(partMessageId)) {
+          pendingDeltaByPart.delete(partId)
+          continue
         }
 
         if (partId) {
@@ -471,6 +559,12 @@ export async function relaySessionEvents(
       }
 
       if (event.type === "question.asked") {
+        if (correlationToken) {
+          const messageId = asText(firstDefined(event.properties?.messageID, event.properties?.messageId))
+          if (messageId && !isRelevantMessageId(messageId)) {
+            continue
+          }
+        }
         await sink.onQuestion(asText(event.properties?.message) || "Agent asked a question.")
         continue
       }
@@ -515,11 +609,23 @@ export async function relaySessionEvents(
       }
 
       if (event.type === "permission.asked") {
+        if (correlationToken) {
+          const messageId = asText(firstDefined(event.properties?.messageID, event.properties?.messageId))
+          if (messageId && !isRelevantMessageId(messageId)) {
+            continue
+          }
+        }
         await sink.onPermission(asText(event.properties?.message) || "Agent requested permission.")
         continue
       }
 
       if (event.type === "session.error") {
+        if (correlationToken && targetAssistantMessageId) {
+          const messageId = asText(firstDefined(event.properties?.messageID, event.properties?.messageId, infoMessageId(event.properties)))
+          if (messageId && !isRelevantMessageId(messageId)) {
+            continue
+          }
+        }
         const errorMsg = asText(event.properties?.error) || "Session error"
         await sink.onError(errorMsg)
         hadError = true
@@ -527,6 +633,10 @@ export async function relaySessionEvents(
       }
 
       if (event.type === "message.updated") {
+        if (!shouldProcessMessageUpdated(event.properties)) {
+          continue
+        }
+
         const info = event.properties?.info && typeof event.properties.info === "object"
           ? event.properties.info as Record<string, unknown>
           : undefined
@@ -537,6 +647,10 @@ export async function relaySessionEvents(
         }
 
         const status = asStatus(event.properties?.status)
+        if (correlationToken && infoId && infoId === targetAssistantMessageId && ["complete", "completed", "done", "finished"].includes(status)) {
+          targetMessageCompleted = true
+          sawTerminalEvent = true
+        }
         if (!sawTextDelta && !emittedFallbackText && ["complete", "completed", "done", "finished"].includes(status)) {
           const finalText = extractTextFromMessageUpdated(event.properties)
           if (finalText) {

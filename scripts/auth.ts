@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { CredentialStore } from "../src/credential-store.js"
-import { OpencodeRuntime } from "../src/opencode-runtime.js"
+import { createSandboxOpencodeClient } from "../src/opencode-client.js"
 import { classifyAuthMethod, pickBestOAuthMethod } from "../src/provider-registry.js"
 
 function usage(): string {
@@ -68,8 +68,8 @@ async function main(): Promise<void> {
       throw new Error("OPENCODE_BASE_URL is required for local OAuth connect")
     }
 
-    const runtime = new OpencodeRuntime(baseUrl, process.env.OPENCODE_SERVER_PASSWORD)
-    const methods = await runtime.fetchProviderAuthMethods()
+    const client = createSandboxOpencodeClient(baseUrl, process.env.OPENCODE_SERVER_PASSWORD)
+    const methods = await client.provider.auth()
     const providerMethods = methods[subcommand] || []
     if (providerMethods.length === 0) {
       throw new Error(`No auth methods reported for provider '${subcommand}'`)
@@ -86,7 +86,10 @@ async function main(): Promise<void> {
       )
     }
 
-    const authStart = await runtime.authorizeProviderOAuth(subcommand, index)
+    const authStart = await client.provider.oauth.authorize({
+      path: { id: subcommand },
+      body: { method: index },
+    })
     const instructions = typeof authStart.instructions === "string" ? authStart.instructions : undefined
     const url = typeof authStart.url === "string" ? authStart.url : undefined
 
@@ -104,7 +107,10 @@ async function main(): Promise<void> {
       process.stdin.once("data", () => resolve())
     })
 
-    const callback = await runtime.completeProviderOAuth(subcommand, index)
+    const callback = await client.provider.oauth.callback({
+      path: { id: subcommand },
+      body: { method: index },
+    })
     if (callback && Object.keys(callback).length > 0) {
       store.setProviderAuth(subcommand, callback)
     }

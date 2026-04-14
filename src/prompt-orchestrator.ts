@@ -2,62 +2,22 @@
  * Orchestrates the full prompt flow: auth, session, execution, event streaming.
  * The main entry point for processing /ask commands.
  */
-import type { ChannelStateStore } from "./channel-state-store.js"
 import type { CredentialStore } from "./credential-store.js"
 import { ensureProviderAuth } from "./auth-bootstrap.js"
 import { resolveSessionForActiveProfile } from "./session-manager.js"
 import { relaySessionEvents, type EventRelaySink } from "./event-relay.js"
 import type { ProviderRegistry } from "./provider-registry.js"
-import type { OpencodeRuntime } from "./opencode-runtime.js"
+import { syncProviderRegistry, type OpencodeClient } from "./opencode-client.js"
+import type { ThreadRuntimeStore } from "./thread-runtime-store.js"
 
-export interface RuntimeClientAdapter {
-  auth: {
-    set(input: { path: { id: string }; body: Record<string, unknown> }): Promise<unknown>
-  }
-  provider: {
-    auth(): Promise<{ data: Record<string, Array<{ label: string }>> }>
-    oauth: {
-      authorize(input: { path: { id: string }; body: { method: number } }): Promise<{ data: Record<string, unknown> }>
-      callback(input: { path: { id: string }; body: { method: number } }): Promise<{ data: Record<string, unknown> }>
-    }
-  }
-  session: {
-    create(input: { body: { title: string } }): Promise<{ data: { id: string } }>
-  }
-  event: {
-    subscribe(input?: { signal?: AbortSignal }): {
-      stream: AsyncIterable<{ type: string; sessionID?: string; properties?: Record<string, unknown> }>
-    }
-  }
-}
-
-function toClient(runtime: OpencodeRuntime): RuntimeClientAdapter {
-  return {
-    auth: {
-      set: ({ path, body }) => runtime.setProviderAuth(path.id, body),
-    },
-    provider: {
-      auth: async () => ({ data: await runtime.fetchProviderAuthMethods() }),
-      oauth: {
-        authorize: async () => ({ data: {} }),
-        callback: async () => ({ data: {} }),
-      },
-    },
-    session: {
-      create: async ({ body }) => ({ data: { id: await runtime.createSession(body.title) } }),
-    },
-    event: {
-      subscribe: (input) => ({ stream: runtime.subscribeEvents(input?.signal) }),
-    },
-  }
-}
+export type RuntimeClientAdapter = Pick<OpencodeClient, "auth" | "provider" | "session" | "event">
 
 export async function executePromptForChannel(
-  runtime: OpencodeRuntime,
+  client: OpencodeClient,
   registry: ProviderRegistry,
   credentials: CredentialStore,
-  stateStore: ChannelStateStore,
-  channelId: string,
+  runtimeStore: ThreadRuntimeStore,
+  threadId: string,
   selection: {
     providerId: string
     modelId: string
@@ -94,16 +54,14 @@ export async function executePromptForChannel(
     }
   | { ok: false; message: string }
 > {
-  const state = stateStore.get(channelId)
   const { providerId, modelId } = selection
 
-  await runtime.syncRegistry(registry)
+  await syncProviderRegistry(client, registry)
 
-  const client = toClient(runtime)
   let authPrimed = false
   if (options.providerAuth) {
     try {
-      await runtime.setProviderAuth(providerId, options.providerAuth)
+      await client.auth.set({ path: { id: providerId }, body: options.providerAuth })
       authPrimed = true
     } catch {
       // Fall through to normal auth bootstrap path
@@ -131,10 +89,13 @@ export async function executePromptForChannel(
   let sessionId: string
   if (options.forceNewSession) {
     const profileKey = `${providerId}:${modelId}`
-    sessionId = await runtime.createSession(`discord-${channelId}-${profileKey}`)
-    stateStore.setSessionForProfile(channelId, providerId, modelId, sessionId)
+    const created = await client.session.create({
+      body: { title: `discord-${threadId}-${profileKey}` },
+    })
+    sessionId = created.id
+    await runtimeStore.setSessionForProfile(threadId, providerId, modelId, sessionId)
   } else {
-    sessionId = await resolveSessionForActiveProfile(client, stateStore, channelId, providerId, modelId)
+    sessionId = await resolveSessionForActiveProfile(client, runtimeStore, threadId, providerId, modelId)
   }
 
   const relayPromise = relaySessionEvents(client, sink, sessionId, {
@@ -155,9 +116,15 @@ export async function executePromptForChannel(
       ? [options.runtimeContext, "", prompt].join("\n")
       : prompt
 
-  await runtime.promptAsync(sessionId, finalPrompt, {
-    providerId,
-    modelId,
+  await client.session.promptAsync({
+    path: { id: sessionId },
+    body: {
+      model: {
+        providerID: providerId,
+        modelID: modelId,
+      },
+      parts: [{ type: "text", text: finalPrompt }],
+    },
   })
   const relayResult = await relayPromise
 
@@ -173,9 +140,18 @@ export async function executePromptForChannel(
 
   let filesEdited = relayResult.filesEdited || []
   if (filesEdited.length === 0 && relayResult.lastAssistantMessageId) {
-    const fetched = await runtime.fetchSessionDiff(sessionId, relayResult.lastAssistantMessageId)
-    if (fetched.length > 0) {
-      filesEdited = fetched
+    try {
+      const fetched = await client.session.diff({
+        path: { id: sessionId },
+        query: { messageID: relayResult.lastAssistantMessageId },
+      })
+      if (fetched.length > 0) {
+        filesEdited = fetched
+          .map((item) => item.file || "")
+          .filter(Boolean)
+      }
+    } catch {
+      // Ignore diff fetch failures.
     }
   }
 

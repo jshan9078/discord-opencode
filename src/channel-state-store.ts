@@ -11,7 +11,6 @@ export interface ChannelState {
   opencodePassword?: string
   activeProviderId?: string
   activeModelId?: string
-  sessionByProfile?: Record<string, string>
   repoUrl?: string
   branch?: string
   projectName?: string
@@ -55,14 +54,13 @@ function saveAll(config: ChannelStateConfig): void {
 export class ChannelStateStore {
   get(channelId: string): ChannelState {
     const config = loadAll()
-    return config.channels[channelId] || { channelId, sessionByProfile: {} }
+    return config.channels[channelId] || { channelId }
   }
 
   set(state: ChannelState): void {
     const config = loadAll()
     config.channels[state.channelId] = {
       ...state,
-      sessionByProfile: state.sessionByProfile || {},
     }
     saveAll(config)
   }
@@ -70,9 +68,6 @@ export class ChannelStateStore {
   setActiveProvider(channelId: string, providerId: string): ChannelState {
     const state = this.get(channelId)
     state.activeProviderId = providerId
-    if (state.activeModelId && !state.sessionByProfile) {
-      state.sessionByProfile = {}
-    }
     this.set(state)
     return state
   }
@@ -100,36 +95,5 @@ export class ChannelStateStore {
     delete state.projectName
     this.set(state)
     return state
-  }
-
-  getProfileKeyForSelection(providerId: string, modelId: string): string {
-    return `${providerId}:${modelId}`
-  }
-
-  setSessionForProfile(channelId: string, providerId: string, modelId: string, sessionId: string): ChannelState {
-    const state = this.get(channelId)
-    const key = this.getProfileKeyForSelection(providerId, modelId)
-    state.sessionByProfile ||= {}
-    state.sessionByProfile[key] = sessionId
-    this.set(state)
-    return state
-  }
-
-  getSessionForProfile(channelId: string, providerId: string, modelId: string): string | undefined {
-    const state = this.get(channelId)
-    const key = this.getProfileKeyForSelection(providerId, modelId)
-    return state.sessionByProfile?.[key]
-  }
-
-  clearSessionForProfile(channelId: string, providerId: string, modelId: string): boolean {
-    const state = this.get(channelId)
-    const key = this.getProfileKeyForSelection(providerId, modelId)
-    if (!state.sessionByProfile?.[key]) {
-      return false
-    }
-
-    delete state.sessionByProfile[key]
-    this.set(state)
-    return true
   }
 }

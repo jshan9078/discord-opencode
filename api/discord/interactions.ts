@@ -1123,29 +1123,32 @@ async function handleProjectCommand(interaction: Interaction): Promise<Response>
 }
 
 async function processAskInteraction(interaction: Interaction, prompt: string): Promise<void> {
+  let lockRunId: string | undefined
+  let lockThreadId: string | undefined
+  let lockStore: { releaseRunLock(threadId: string, runId: string): Promise<void> } | undefined
   try {
   const [
     { ChannelStateStore },
     { CredentialStore },
     { OAuthTokenStore },
-    { OpencodeRuntime },
+    { createSandboxOpencodeClient },
     { executePromptForChannel },
     { getSandboxManager },
     { getRecoveryContext },
     { loadProviderRegistry },
     { SelectionStore },
-    { ThreadSandboxStore },
+    { ThreadRuntimeStore },
   ] = await Promise.all([
     import("../../src/channel-state-store.js"),
     import("../../src/credential-store.js"),
     import("../../src/oauth-token-store.js"),
-    import("../../src/opencode-runtime.js"),
+    import("../../src/opencode-client.js"),
     import("../../src/prompt-orchestrator.js"),
       import("../../src/sandbox-manager.js"),
       import("../../src/discord-message-fetcher.js"),
       import("../../src/provider-registry-store.js"),
       import("../../src/selection-store.js"),
-      import("../../src/thread-sandbox-store.js"),
+      import("../../src/thread-runtime-store.js"),
     ])
 
     const channelId = interaction.channel_id
@@ -1215,7 +1218,6 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
           repoUrl: channelState.repoUrl,
           branch: channelState.branch,
           projectName: channelState.projectName,
-          sessionByProfile: {},
         })
       }
     }
@@ -1240,8 +1242,22 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
 
   const conversationId = effectiveThreadId
   const conversationState = stateStore.get(conversationId)
-  const threadSandboxStore = new ThreadSandboxStore()
-  const threadSandboxState = await threadSandboxStore.get(conversationId)
+  const threadRuntimeStore = new ThreadRuntimeStore()
+  lockStore = threadRuntimeStore
+  const threadRuntimeState = await threadRuntimeStore.get(conversationId)
+  const lock = await threadRuntimeStore.acquireRunLock(conversationId)
+  if (!lock.acquired || !lock.runId) {
+    await sendFollowup(
+      interaction.application_id,
+      interaction.token,
+      "Another /ask run is already in progress for this thread. Wait for it to finish, then try again.",
+      undefined,
+      effectiveThreadId,
+    )
+    return
+  }
+  lockRunId = lock.runId
+  lockThreadId = conversationId
 
   // Selection semantics:
   // - If /ask is invoked inside a thread, honor thread overrides.
@@ -1296,15 +1312,15 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
 
     const sandboxManager = getSandboxManager()
     let sandboxContext: SandboxContext
-    const oldSandboxId = threadSandboxState?.sandboxId
+    const oldSandboxId = threadRuntimeState.sandboxId
 
     try {
       sandboxContext = await sandboxManager.getOrCreate(
         conversationId,
-        threadSandboxState?.sandboxId,
+        threadRuntimeState.sandboxId,
         repoUrl,
         branch,
-        threadSandboxState?.opencodePassword,
+        threadRuntimeState.opencodePassword,
       )
     } catch (error) {
       console.error("Failed to get/create sandbox:", error)
@@ -1316,12 +1332,9 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
       return
     }
 
-    await threadSandboxStore.set(conversationId, {
-      sandboxId: sandboxContext.sandboxId,
-      opencodePassword: sandboxContext.opencodePassword,
-    })
+    await threadRuntimeStore.setSandbox(conversationId, sandboxContext.sandboxId, sandboxContext.opencodePassword)
 
-    const runtime = new OpencodeRuntime(sandboxContext.opencodeBaseUrl, sandboxContext.opencodePassword)
+    const client = createSandboxOpencodeClient(sandboxContext.opencodeBaseUrl, sandboxContext.opencodePassword)
     const credentials = new CredentialStore()
     const oauthStore = new OAuthTokenStore()
     const registry = await loadProviderRegistry()
@@ -1357,7 +1370,13 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
     )
   }
 
-    const recoveryContext = isNewSandbox
+    const hadExistingSession = Boolean(await threadRuntimeStore.getSessionForProfile(
+      conversationId,
+      selection.providerId,
+      selection.modelId,
+    ))
+
+    const recoveryContext = (isNewSandbox || !hadExistingSession)
       ? await getRecoveryContext(stateStore, conversationId, prompt)
       : undefined
 
@@ -1516,10 +1535,10 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
     }
 
     const result = await executePromptForChannel(
-      runtime,
+      client,
       registry,
       credentials,
-    stateStore,
+    threadRuntimeStore,
     conversationId,
     {
       providerId: selection.providerId,
@@ -1673,6 +1692,10 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
       await updateOriginalResponse(interaction.application_id, interaction.token, `Request failed: ${message}`)
     } catch (followupError) {
       console.error("Failed to send fallback followup:", followupError)
+    }
+  } finally {
+    if (lockStore && lockRunId && lockThreadId) {
+      await lockStore.releaseRunLock(lockThreadId, lockRunId)
     }
   }
 }
@@ -1990,19 +2013,18 @@ export default async function handler(
       const [{ getSandboxManager }] = await Promise.all([
         import("../../src/sandbox-manager.js"),
       ])
-      const [{ ThreadSandboxStore }] = await Promise.all([
-        import("../../src/thread-sandbox-store.js"),
+      const [{ ThreadRuntimeStore }] = await Promise.all([
+        import("../../src/thread-runtime-store.js"),
       ])
       const sandboxManager = getSandboxManager()
-      const threadSandboxStore = new ThreadSandboxStore()
-      const threadSandboxState = await threadSandboxStore.get(currentChannelId)
-      await sandboxManager.stop(currentChannelId, threadSandboxState?.sandboxId)
-      await threadSandboxStore.clear(currentChannelId)
+      const threadRuntimeStore = new ThreadRuntimeStore()
+      const threadRuntimeState = await threadRuntimeStore.get(currentChannelId)
+      await sandboxManager.stop(currentChannelId, threadRuntimeState.sandboxId)
+      await threadRuntimeStore.clear(currentChannelId)
 
       const state = stateStore.get(currentChannelId)
       delete state.sandboxId
       delete state.opencodePassword
-      state.sessionByProfile = {}
       stateStore.set(state)
 
       await sendChunkedInteractionResponse(interaction, res, "Sandbox stopped for this thread.")

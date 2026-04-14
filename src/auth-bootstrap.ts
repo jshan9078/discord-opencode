@@ -5,7 +5,6 @@
 import type { RuntimeClientAdapter } from "./prompt-orchestrator.js"
 import type { CredentialStore } from "./credential-store.js"
 import type { ProviderRegistry } from "./provider-registry.js"
-import { ChannelStateStore } from "./channel-state-store.js"
 
 export type AuthResult =
   | { type: "ok" }
@@ -74,33 +73,4 @@ export async function ensureProviderAuth(
   }
 
   return { type: "ok" }
-}
-
-export async function resolveSessionForActiveProfile(
-  client: RuntimeClientAdapter,
-  stateStore: ChannelStateStore,
-  channelId: string,
-): Promise<string> {
-  const state = stateStore.get(channelId)
-  const key = state.activeProviderId && state.activeModelId
-    ? `${state.activeProviderId}:${state.activeModelId}`
-    : null
-
-  if (key && state.sessionByProfile?.[key]) {
-    return state.sessionByProfile[key]
-  }
-
-  const created = await client.session.create({
-    body: { title: `discord-${channelId}` },
-  })
-  const sessionId = created.data.id
-
-  if (key) {
-    const newState = stateStore.get(channelId)
-    newState.sessionByProfile ||= {}
-    newState.sessionByProfile[key] = sessionId
-    stateStore.set(newState)
-  }
-
-  return sessionId
 }

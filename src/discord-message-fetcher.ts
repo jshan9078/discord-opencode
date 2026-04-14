@@ -74,7 +74,7 @@ export async function getRecoveryContext(
   currentPrompt: string,
 ): Promise<string | undefined> {
   const state = stateStore.get(channelId)
-  const threadId = state.threadId
+  const threadId = state.threadId || channelId
   const botToken = process.env.DISCORD_BOT_TOKEN
 
   if (!threadId || !botToken) {

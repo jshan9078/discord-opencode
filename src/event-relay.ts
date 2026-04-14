@@ -10,9 +10,9 @@ export interface EventEnvelope {
 
 export interface EventStreamClient {
   event: {
-    subscribe(input?: { signal?: AbortSignal }): {
+    subscribe(input?: { signal?: AbortSignal }): Promise<{
       stream: AsyncIterable<EventEnvelope>
-    }
+    }>
   }
 }
 
@@ -268,7 +268,7 @@ export async function relaySessionEvents(
     }
   }, 500)
 
-  const events = client.event.subscribe({ signal: timeoutController.signal })
+  const events = await client.event.subscribe({ signal: timeoutController.signal })
 
   let hadError = false
   let usage: EventRelayResult["usage"]

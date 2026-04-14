@@ -102,7 +102,7 @@ describe("isTerminalSessionEvent", () => {
     const result = await relaySessionEvents(
       {
         event: {
-          subscribe: () => ({ stream: stream() }),
+          subscribe: async () => ({ stream: stream() }),
         },
       },
       {
@@ -177,7 +177,7 @@ describe("isTerminalSessionEvent", () => {
     await relaySessionEvents(
       {
         event: {
-          subscribe: () => ({ stream: stream() }),
+          subscribe: async () => ({ stream: stream() }),
         },
       },
       {
@@ -236,7 +236,7 @@ describe("isTerminalSessionEvent", () => {
     const result = await relaySessionEvents(
       {
         event: {
-          subscribe: () => ({ stream: stream() }),
+          subscribe: async () => ({ stream: stream() }),
         },
       },
       {

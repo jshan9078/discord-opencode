@@ -2566,9 +2566,26 @@ async function drainThreadAskQueue(threadId: string, origin?: string): Promise<v
   const queueStore = new ThreadAskQueueStore()
   const drainStartedAt = Date.now()
   logAskStage("drain_start", { threadId, origin })
-  const lease = await runtimeStore.acquireRunLock(threadId, 60_000, `queue:${threadId}`)
-  if (!lease.acquired || !lease.runId) {
-    logAskStage("drain_lease_refused", { threadId, origin })
+
+  let lease: { acquired: boolean; runId?: string; duplicate?: boolean } | undefined
+  let retryCount = 0
+  const maxRetries = 5
+
+  while (retryCount <= maxRetries) {
+    lease = await runtimeStore.acquireRunLock(threadId, 60_000, `queue:${threadId}`)
+    if (lease.acquired && lease.runId) {
+      break
+    }
+    retryCount += 1
+    if (retryCount <= maxRetries) {
+      const backoffMs = Math.min(500 * Math.pow(2, retryCount), 4000)
+      logAskStage("drain_lease_retry", { threadId, origin, retryCount, backoffMs })
+      await new Promise((resolve) => setTimeout(resolve, backoffMs))
+    }
+  }
+
+  if (!lease?.acquired || !lease?.runId) {
+    logAskStage("drain_lease_refused", { threadId, origin, retryCount })
     return
   }
   logAskStage("drain_lease_acquired", { threadId, origin, leaseRunId: lease.runId })

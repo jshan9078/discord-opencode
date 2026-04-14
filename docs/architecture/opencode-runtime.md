@@ -4,7 +4,7 @@ The OpenCode runtime bridges the serverless Discord endpoint to the OpenCode ser
 
 ## Overview
 
-The `opencode-runtime.ts` provides a TypeScript client for OpenCode's REST API:
+The `opencode-client.ts` provides a TypeScript client for OpenCode's REST API:
 
 ```typescript
 const runtime = new OpencodeRuntime(baseUrl, password)
@@ -170,7 +170,7 @@ await runtime.promptAsync(sessionId, prompt)
 
 ## Related Files
 
-- `src/opencode-runtime.ts` - HTTP client implementation
+- `src/opencode-client.ts` - HTTP client implementation
 - `src/prompt-orchestrator.ts` - Main orchestration
 - `src/auth-bootstrap.ts` - Auth bootstrapping
 - `src/session-manager.ts` - Session management

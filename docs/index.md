@@ -38,13 +38,13 @@ Discord User → Slash Command → Vercel Functions → OpenCode Runtime → Ver
 | Command | Description |
 |---------|-------------|
 | `/ask` | Send coding request |
-| `/project select` | Pick repo/branch via menu |
-| `/project set <url> [branch]` | Set project directly |
-| `/project show` | View current project |
+| `/opencode [owner/repo]` | Start session, optionally with repo |
 | `/providers` | List available providers |
 | `/models [provider]` | List models |
 | `/use-provider <id>` | Switch provider |
 | `/use-model <id>` | Switch model |
+| `/checkpoint` | Save session as checkpoint |
+| `/delete` | Remove session without checkpoint |
 
 See [Slash Commands](./commands/slash-commands.md) for details.
 

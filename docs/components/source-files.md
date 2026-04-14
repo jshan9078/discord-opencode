@@ -39,21 +39,23 @@ Persists to `~/.cache/opencode-chat-bridge/channel-state.json`.
 
 ### command-parser.ts
 
-> Parses text commands (from slash command mapping) into structured types. Handles providers, models, project, auth, and prompt commands.
+> Parses text commands (from slash command mapping) into structured types. Handles providers, models, opencode, auth, and prompt commands.
 
 ```typescript
 export type ParsedCommand =
   | { type: "providers" }
+  | { type: "config" }
+  | { type: "health_check" }
+  | { type: "update" }
   | { type: "models"; providerId?: string }
   | { type: "use_provider"; providerId: string }
   | { type: "use_model"; modelId: string }
-  | { type: "project_select" }
-  | { type: "project_set"; repo: string; branch?: string }
-  | { type: "project_clear" }
-  | { type: "project_show" }
   | { type: "auth_connect"; providerId: string; methodHint?: string }
   | { type: "auth_set_key"; providerId: string }
   | { type: "auth_disconnect"; providerId: string }
+  | { type: "opencode"; project?: string }
+  | { type: "checkpoint" }
+  | { type: "delete" }
   | { type: "help" }
   | { type: "invalid"; message: string }
   | { type: "prompt"; text: string }
@@ -86,14 +88,16 @@ Uses AES-256-GCM encryption. Stores to `credentials.json`.
 
 ### discord-application-commands.ts
 
-> Defines Discord slash command structure (/ask, /project, /providers, etc.). Used by register-commands.ts to register commands with Discord.
+> Defines Discord slash command structure (/ask, /opencode, /checkpoint, etc.). Used by register-commands.ts to register commands with Discord.
 
 ```typescript
 export function buildApplicationCommands(): DiscordApplicationCommand[]
 
 // Returns:
 // - /ask (prompt)
-// - /project (select, set, clear, show subcommands)
+// - /opencode (project option)
+// - /checkpoint
+// - /delete
 // - /providers
 // - /models (provider option)
 // - /use-provider (provider option)
@@ -109,7 +113,7 @@ Used by `scripts/register-commands.ts`.
 
 ### discord-command-service.ts
 
-> Executes parsed commands against channel state, providers, and credentials. Handles /providers, /models, /use-provider, /use-model, /project, /auth, etc.
+> Executes parsed commands against channel state, providers, and credentials. Handles /providers, /models, /use-provider, /use-model, /opencode, /checkpoint, /delete, /auth, etc.
 
 ```typescript
 export function handleDiscordCommand(
@@ -158,7 +162,7 @@ Used by `prompt-orchestrator.ts` to stream events to Discord.
 
 ### github-client.ts
 
-> GitHub API client for listing repos and branches. Used by /project select to show interactive repo/branch pickers.
+> GitHub API client for listing repos and branches. Used by `/opencode` autocomplete to show available repos.
 
 ```typescript
 class GitHubClient {
@@ -176,7 +180,7 @@ Uses `GITHUB_TOKEN` env var. Called from `api/discord/interactions.ts`.
 
 ### interaction-command-mapper.ts
 
-> Maps Discord Interactions payloads (slash command options) to text commands. Converts /ask, /project, /providers, etc. into parseable command strings.
+> Maps Discord Interactions payloads (slash command options) to text commands. Converts /ask, /opencode, /providers, etc. into parseable command strings.
 
 ```typescript
 export function mapInteractionCommandToText(
@@ -184,19 +188,19 @@ export function mapInteractionCommandToText(
 ): { type: "command" | "prompt"; text: string }
 
 // /ask prompt="hello" → { type: "prompt", text: "hello" }
-// /project select → { type: "command", text: "project select" }
+// /opencode owner/repo → { type: "command", text: "opencode owner/repo" }
 ```
 
 First step in `api/discord/interactions.ts`.
 
 ---
 
-### opencode-runtime.ts
+### opencode-client.ts
 
 > HTTP client for OpenCode server (create session, prompt, stream events). Bridges the Discord endpoint to the OpenCode API.
 
 ```typescript
-class OpencodeRuntime {
+class OpencodeClient {
   constructor(baseUrl: string, password?: string)
   async health(): Promise<void>
   async createSession(title: string): Promise<string>
@@ -274,7 +278,7 @@ export interface ProviderRecord {
 export function classifyAuthMethod(label: string): "oauth" | "api-key" | "none" | "unknown"
 ```
 
-Synced at runtime via `opencode-runtime.ts`.
+Synced at runtime via `opencode-client.ts`.
 
 ---
 
@@ -286,7 +290,7 @@ Synced at runtime via `opencode-runtime.ts`.
 export function loadProviderRegistryFromEnv(raw?: string): ProviderRegistry
 ```
 
-Used as fallback if `opencode-runtime.ts` sync fails or isn't configured.
+Used as fallback if `opencode-client.ts` sync fails or isn't configured.
 
 ---
 

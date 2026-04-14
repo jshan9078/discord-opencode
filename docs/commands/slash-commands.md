@@ -22,29 +22,22 @@ Send a coding request to the agent.
 - Events stream to Discord as the agent works
 - Final response posted as followup
 
-### /project
+### /opencode
 
-Manage the project (repository) for the current channel.
+Start a new OpenCode session, optionally with a GitHub project.
 
 ```
-/project select     # Interactive repo/branch picker
-/project set <repo> [branch]  # Set repo directly
-/project show       # Show current project
-/project clear      # Clear project setting
+/opencode                      # Start empty session
+/opencode owner/repo           # Start with GitHub repo (e.g., anthropic/claude-code)
 ```
 
-**Subcommands:**
-- `select`: Opens GitHub repo select menu, then branch select menu
-- `set`: Set repo URL and optional branch (defaults to "main")
-- `show`: Display current project and branch
-- `clear`: Remove project setting
+**Options:**
+- `project` (optional): GitHub repo in `owner/repo` format, with autocomplete
 
-**Examples:**
-```
-/project set https://github.com/user/repo
-/project set https://github.com/user/repo main
-/project show
-```
+**Behavior:**
+- Creates or resumes a thread-bound session for this Discord channel
+- If project is provided, clones the repo into the sandbox
+- Thread session persists across prompts until `/delete`
 
 ### /providers
 
@@ -194,6 +187,32 @@ Clear stored credentials for a provider.
 - `provider` (required): Provider ID
 
 Clears both the local credential store and any sandbox credentials.
+
+### /checkpoint
+
+Save the current thread session state as a resumable checkpoint.
+
+```
+/checkpoint
+```
+
+**Behavior:**
+- Snapshots the current sandbox state
+- Enables fast resume on next `/opencode` or `/ask`
+- Useful before ending a session or switching contexts
+
+### /delete
+
+Stop and remove the current thread session without checkpointing.
+
+```
+/delete
+```
+
+**Behavior:**
+- Terminates the sandbox immediately
+- Removes session data (no resume possible)
+- Clears channel state for this thread
 
 ## Command Flow
 

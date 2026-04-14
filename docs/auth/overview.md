@@ -64,7 +64,7 @@ If refresh fails (token revoked), run `/auth-connect <provider>` again to re-aut
 ## GitHub Auth
 
 GitHub is needed for:
-- Repo/branch listing (`/project select`)
+- Repo autocomplete (`/opencode` with project)
 - Pushing commits from sandbox
 
 Required PAT scopes: `repo`, `read:user`

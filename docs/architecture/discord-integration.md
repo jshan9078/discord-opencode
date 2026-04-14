@@ -61,7 +61,7 @@ The `interaction-command-mapper.ts` transforms Discord's payload format into tex
 
 ```
 /ask prompt="add login"      → { type: "prompt", text: "add login" }
-/project select              → { type: "command", text: "project select" }
+/opencode owner/repo         → { type: "command", text: "opencode owner/repo" }
 /use-provider openai         → { type: "command", text: "use provider openai" }
 ```
 
@@ -70,9 +70,11 @@ This allows reuse of the existing `command-parser.ts` which handles text command
 ## Slash Commands Available
 
 | Command | Options | Description |
-|---------|---------|-------------|
+|--------|---------|-------------|
 | `/ask` | `prompt: string` | Send coding request |
-| `/project` | `select, set, clear, show` | Manage project |
+| `/opencode` | `project?: string` | Start session, optionally with repo |
+| `/checkpoint` | - | Save current session as checkpoint |
+| `/delete` | - | Remove session without checkpoint |
 | `/providers` | - | List available providers |
 | `/models` | `provider?: string` | List models |
 | `/use-provider` | `provider: string` | Set active provider |
@@ -86,9 +88,9 @@ This allows reuse of the existing `command-parser.ts` which handles text command
 ### Project Selection (Select Menus)
 
 ```
-/project select → shows repo list (custom_id: "project:repo")
-  └─ User picks "owner/repo" → shows branch list (custom_id: "project:branch")
-        └─ User picks "main" → saves to channel state
+/opencode (with autocomplete for owner/repo)
+  └─ User picks "owner/repo" or types directly
+        └─ Thread session created with project cloned
 ```
 
 The GitHub API calls happen in `github-client.ts`:

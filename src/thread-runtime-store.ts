@@ -250,16 +250,25 @@ export class ThreadRuntimeStore {
 
   async releaseRunLock(threadId: string, runId: string): Promise<void> {
     const current = await this.get(threadId)
-    console.info("lock.release", {
-      threadId,
-      runId,
-      currentLockRunId: current.runLock?.runId,
-      wouldDelete: current.runLock && current.runLock.runId === runId,
-    })
     if (!current.runLock || current.runLock.runId !== runId) {
       return
     }
 
-    await del(threadLockPath(threadId)).catch(() => undefined)
+    console.info("lock.release", { threadId, runId })
+
+    try {
+      await put(threadLockPath(threadId), JSON.stringify({
+        runId: "released",
+        releasedAt: Date.now(),
+        expiresAt: Date.now() - 1,
+      }), {
+        access: "private",
+        allowOverwrite: true,
+        contentType: "application/json",
+      })
+      console.info("lock.released_marker_written", { threadId, runId })
+    } catch (err) {
+      console.error("lock.release_failed", { threadId, runId, error: String(err) })
+    }
   }
 }

@@ -2549,7 +2549,7 @@ export default async function handler(
       const payload = JSON.parse(body) as Partial<InternalDrainRequest>
       if (payload.type === "internal-drain-thread" && typeof payload.threadId === "string" && payload.threadId) {
         const origin = getRequestOrigin(req)
-        waitUntil(drainThreadAskQueue(payload.threadId, origin))
+        await drainThreadAskQueue(payload.threadId, origin)
         await sendNodeResponse(res, json({ ok: true }))
         return
       }

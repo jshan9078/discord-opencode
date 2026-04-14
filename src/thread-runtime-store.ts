@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto"
-import { get, put } from "@vercel/blob"
+import { del, get, put } from "@vercel/blob"
 
 export interface ThreadRunLock {
   runId: string
@@ -26,14 +26,56 @@ function threadPath(threadId: string): string {
   return `runtime/threads/${threadId}.json`
 }
 
+function threadLockPath(threadId: string): string {
+  return `runtime/thread-locks/${threadId}.json`
+}
+
+async function readRunLock(threadId: string): Promise<ThreadRunLock | undefined> {
+  try {
+    const result = await get(threadLockPath(threadId), { access: "private" })
+    if (!result || !("stream" in result)) {
+      return undefined
+    }
+
+    const parsed = JSON.parse(await new Response(result.stream).text()) as Partial<ThreadRunLock>
+    if (!parsed || typeof parsed !== "object") {
+      return undefined
+    }
+
+    const runId = typeof parsed.runId === "string" ? parsed.runId : ""
+    const startedAt = Number(parsed.startedAt || 0)
+    const expiresAt = Number(parsed.expiresAt || 0)
+    const interactionId = typeof parsed.interactionId === "string" ? parsed.interactionId : undefined
+    if (!runId || !startedAt || !expiresAt) {
+      return undefined
+    }
+
+    return { runId, interactionId, startedAt, expiresAt }
+  } catch {
+    return undefined
+  }
+}
+
+async function writeRunLock(threadId: string, runLock: ThreadRunLock): Promise<void> {
+  requireBlobToken()
+  await put(threadLockPath(threadId), JSON.stringify(runLock), {
+    access: "private",
+    allowOverwrite: true,
+    contentType: "application/json",
+  })
+}
+
 export class ThreadRuntimeStore {
   async get(threadId: string): Promise<ThreadRuntimeState> {
     requireBlobToken()
 
     try {
-      const result = await get(threadPath(threadId), { access: "private" })
+      const [result, separateRunLock] = await Promise.all([
+        get(threadPath(threadId), { access: "private" }),
+        readRunLock(threadId),
+      ])
       if (!result || !("stream" in result)) {
-        return { updatedAt: Date.now() }
+        return { updatedAt: Date.now(), runLock: separateRunLock }
       }
 
       const text = await new Response(result.stream).text()
@@ -42,19 +84,19 @@ export class ThreadRuntimeStore {
         ? Object.values(parsed.sessionByProfile).find((value): value is string => typeof value === "string" && value.length > 0)
         : undefined
 
-      return {
-        sandboxId: typeof parsed.sandboxId === "string" ? parsed.sandboxId : undefined,
-        opencodePassword: typeof parsed.opencodePassword === "string" ? parsed.opencodePassword : undefined,
-        sessionId: typeof parsed.sessionId === "string" ? parsed.sessionId : legacySessionId,
-        runLock: parsed.runLock && typeof parsed.runLock === "object"
-          ? {
-              runId: String(parsed.runLock.runId || ""),
-              startedAt: Number(parsed.runLock.startedAt || 0),
-              expiresAt: Number(parsed.runLock.expiresAt || 0),
-            }
-          : undefined,
-        updatedAt: Number(parsed.updatedAt || Date.now()),
-      }
+        return {
+          sandboxId: typeof parsed.sandboxId === "string" ? parsed.sandboxId : undefined,
+          opencodePassword: typeof parsed.opencodePassword === "string" ? parsed.opencodePassword : undefined,
+          sessionId: typeof parsed.sessionId === "string" ? parsed.sessionId : legacySessionId,
+          runLock: separateRunLock ?? (parsed.runLock && typeof parsed.runLock === "object"
+            ? {
+                runId: String(parsed.runLock.runId || ""),
+                startedAt: Number(parsed.runLock.startedAt || 0),
+                expiresAt: Number(parsed.runLock.expiresAt || 0),
+              }
+            : undefined),
+          updatedAt: Number(parsed.updatedAt || Date.now()),
+        }
     } catch {
       return { updatedAt: Date.now() }
     }
@@ -65,7 +107,9 @@ export class ThreadRuntimeStore {
     await put(
       threadPath(threadId),
       JSON.stringify({
-        ...state,
+        sandboxId: state.sandboxId,
+        opencodePassword: state.opencodePassword,
+        sessionId: state.sessionId,
         updatedAt: Date.now(),
       }),
       {
@@ -93,11 +137,14 @@ export class ThreadRuntimeStore {
 
   async clear(threadId: string): Promise<void> {
     requireBlobToken()
-    await put(threadPath(threadId), JSON.stringify({}), {
-      access: "private",
-      allowOverwrite: true,
-      contentType: "application/json",
-    })
+    await Promise.all([
+      put(threadPath(threadId), JSON.stringify({}), {
+        access: "private",
+        allowOverwrite: true,
+        contentType: "application/json",
+      }),
+      del(threadLockPath(threadId)).catch(() => undefined),
+    ])
   }
 
   async getSession(threadId: string): Promise<string | undefined> {
@@ -138,15 +185,11 @@ export class ThreadRuntimeStore {
     }
 
     const runId = randomUUID()
-    await this.set(threadId, {
-      ...current,
-      runLock: {
-        runId,
-        interactionId,
-        startedAt: now,
-        expiresAt: now + ttlMs,
-      },
-      updatedAt: now,
+    await writeRunLock(threadId, {
+      runId,
+      interactionId,
+      startedAt: now,
+      expiresAt: now + ttlMs,
     })
 
     const confirmed = await this.get(threadId)
@@ -164,14 +207,10 @@ export class ThreadRuntimeStore {
     }
 
     const now = Date.now()
-    await this.set(threadId, {
-      ...current,
-      runLock: {
-        ...current.runLock,
-        startedAt: current.runLock.startedAt,
-        expiresAt: now + ttlMs,
-      },
-      updatedAt: now,
+    await writeRunLock(threadId, {
+      ...current.runLock,
+      startedAt: current.runLock.startedAt,
+      expiresAt: now + ttlMs,
     })
 
     return true
@@ -183,10 +222,6 @@ export class ThreadRuntimeStore {
       return
     }
 
-    await this.set(threadId, {
-      ...current,
-      runLock: undefined,
-      updatedAt: Date.now(),
-    })
+    await del(threadLockPath(threadId)).catch(() => undefined)
   }
 }

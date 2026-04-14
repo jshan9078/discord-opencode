@@ -35,14 +35,14 @@ export function buildApplicationCommands(): DiscordApplicationCommand[] {
     },
     {
       name: "opencode",
-      description: "Start or resume an OpenCode session",
+      description: "Start a new OpenCode session",
       type: 1,
       options: [
         {
           type: 3,
           name: "project",
           description: "GitHub repo (owner/repo)",
-          required: false,
+          required: true,
           autocomplete: true,
         },
       ],

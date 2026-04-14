@@ -1697,35 +1697,16 @@ async function executeQueuedAskRun(run: AskQueueRunRequest): Promise<void> {
     }
   }
 
-  if (!threadRuntimeState.sandboxId) {
-    try {
-      if (threadBinding?.project && threadBinding.workspaceEntryId) {
-        const entry = await workspaceStore.getEntry(threadBinding.userId, threadBinding.project, threadBinding.workspaceEntryId)
-        if (entry) {
-          const resumed = await startThreadSession(conversationId, entry.repoUrl, entry.branch || "main", {
-            snapshotId: entry.snapshotId,
-            resetSessions: false,
-          })
-          threadRuntimeState = {
-            ...threadRuntimeState,
-            sandboxId: resumed.sandboxId,
-            opencodePassword: resumed.opencodePassword,
-          }
-        }
-      } else if (threadBinding?.threadId) {
-        const rawBaselineSnapshotId = await ensureRawBaselineSnapshot()
-        const resumed = await startThreadSession(conversationId, undefined, "main", {
-          snapshotId: rawBaselineSnapshotId,
-          resetSessions: false,
-        })
-        threadRuntimeState = {
-          ...threadRuntimeState,
-          sandboxId: resumed.sandboxId,
-          opencodePassword: resumed.opencodePassword,
-        }
-      }
-    } catch (error) {
-      console.error("Failed to auto-recover missing thread runtime:", error)
+  if (!threadRuntimeState.sandboxId && !commandIsInThread) {
+    const rawBaselineSnapshotId = await ensureRawBaselineSnapshot()
+    const fresh = await startThreadSession(conversationId, undefined, "main", {
+      snapshotId: rawBaselineSnapshotId,
+      resetSessions: true,
+    })
+    threadRuntimeState = {
+      ...threadRuntimeState,
+      sandboxId: fresh.sandboxId,
+      opencodePassword: fresh.opencodePassword,
     }
   }
 
@@ -1733,7 +1714,7 @@ async function executeQueuedAskRun(run: AskQueueRunRequest): Promise<void> {
     await sendFollowup(
       run.applicationId,
       run.token,
-      "No active thread session. Run `/opencode` from a channel first.",
+      "No active thread session. Run `/opencode <project>` from a channel first.",
       undefined,
       effectiveThreadId,
     )

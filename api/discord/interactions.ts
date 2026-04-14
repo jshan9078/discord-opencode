@@ -58,11 +58,6 @@ type Interaction = {
   }
 }
 
-type InternalDrainRequest = {
-  type: "internal-drain-thread"
-  threadId: string
-}
-
 const DISCORD_MESSAGE_LIMIT = 1800
 const DISCORD_AUTOCOMPLETE_LIMIT = 25
 const PROVIDERS_PER_PAGE = 12
@@ -171,42 +166,6 @@ function getRequestOrigin(req: { url?: string; headers: Record<string, string | 
     return `https://${process.env.VERCEL_URL}`
   }
   return undefined
-}
-
-async function triggerThreadDrain(threadId: string, origin: string | undefined): Promise<void> {
-  if (!origin) {
-    logAskStage("drain_trigger_skipped", { threadId, reason: "missing_origin" })
-    return
-  }
-
-  const body = JSON.stringify({ type: "internal-drain-thread", threadId } satisfies InternalDrainRequest)
-  const timestamp = Date.now().toString()
-  const signature = signInternalDispatch(body, timestamp)
-  if (!signature) {
-    logAskStage("drain_trigger_skipped", { threadId, reason: "missing_signature_secret" })
-    return
-  }
-
-  try {
-    logAskStage("drain_trigger_start", { threadId, origin })
-    await fetch(new URL("/api/discord/interactions", origin), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-opencode-internal-timestamp": timestamp,
-        "x-opencode-internal-signature": signature,
-      },
-      body,
-    })
-    logAskStage("drain_trigger_done", { threadId, origin })
-  } catch (error) {
-    logAskStage("drain_trigger_error", {
-      threadId,
-      origin,
-      error: error instanceof Error ? error.message : String(error),
-    })
-    console.error("triggerThreadDrain failed:", error)
-  }
 }
 
 async function sendFollowup(
@@ -2491,59 +2450,40 @@ async function processAskInteraction(interaction: Interaction, prompt: string, o
       return
     }
 
-    const commandIsInThread = await isThreadChannel(channelId)
-    if (!commandIsInThread) {
+    const [{ ThreadRuntimeStore }] = await Promise.all([
+      import("../../src/thread-runtime-store.js"),
+    ])
+
+    logAskStage("ask_start", {
+      threadId: channelId,
+      interactionId: interaction.id,
+    })
+
+    const runtimeStore = new ThreadRuntimeStore()
+    const runtimeState = await runtimeStore.get(channelId)
+
+    if (!runtimeState.sandboxId) {
       await sendFollowup(
         interaction.application_id,
         interaction.token,
-        "Run `/opencode` first in a channel to start or resume a session.",
+        "No active session in this thread. Run `/opencode` to start one.",
       )
       return
     }
 
-    const [{ ThreadAskQueueStore }, { ThreadRuntimeStore }] = await Promise.all([
-      import("../../src/thread-ask-queue-store.js"),
-      import("../../src/thread-runtime-store.js"),
-    ])
+    const statusMessage = "Processing..."
 
-    const queueStore = new ThreadAskQueueStore()
-    const runtimeStore = new ThreadRuntimeStore()
-    const runtimeState = await runtimeStore.get(channelId)
-    logAskStage("enqueue_start", {
-      threadId: channelId,
-      interactionId: interaction.id,
-      hasActiveLock: Boolean(runtimeState.runLock && runtimeState.runLock.expiresAt > Date.now()),
-    })
-    const queueResult = await queueStore.enqueue({
-      threadId: channelId,
+    await updateOriginalResponse(interaction.application_id, interaction.token, statusMessage)
+    logAskStage("ask_executing", { threadId: channelId, interactionId: interaction.id })
+    await executeQueuedAskRun({
       interactionId: interaction.id,
       applicationId: interaction.application_id,
       token: interaction.token,
-      channelId,
-      userId,
-      prompt,
+      channelId: channelId,
+      userId: userId,
+      prompt: prompt,
     })
-
-    const activeAhead = runtimeState.runLock && runtimeState.runLock.expiresAt > Date.now() ? 1 : 0
-    const runsAhead = queueResult.aheadCount + activeAhead
-    const statusMessage = queueResult.duplicate
-      ? "This /ask is already queued for this thread."
-      : runsAhead === 0
-        ? "Queued. Starting now..."
-        : `Queued for this thread. ${runsAhead} run${runsAhead === 1 ? " is" : "s are"} ahead.`
-
-    logAskStage("enqueue_done", {
-      threadId: channelId,
-      interactionId: interaction.id,
-      queueRunId: queueResult.run.id,
-      duplicate: queueResult.duplicate,
-      aheadCount: queueResult.aheadCount,
-      activeAhead,
-      runsAhead,
-    })
-
-    await updateOriginalResponse(interaction.application_id, interaction.token, statusMessage)
-    await triggerThreadDrain(channelId, origin)
+    logAskStage("ask_done", { threadId: channelId, interactionId: interaction.id })
   } catch (error) {
     logAskStage("enqueue_error", {
       threadId: interaction.channel_id,
@@ -2554,104 +2494,6 @@ async function processAskInteraction(interaction: Interaction, prompt: string, o
     const message = error instanceof Error ? error.message : "Unknown error"
     await updateOriginalResponse(interaction.application_id, interaction.token, `Request failed: ${message}`)
   }
-}
-
-async function drainThreadAskQueue(threadId: string, origin?: string): Promise<void> {
-  const [{ ThreadRuntimeStore }, { ThreadAskQueueStore }] = await Promise.all([
-    import("../../src/thread-runtime-store.js"),
-    import("../../src/thread-ask-queue-store.js"),
-  ])
-
-  const runtimeStore = new ThreadRuntimeStore()
-  const queueStore = new ThreadAskQueueStore()
-  const drainStartedAt = Date.now()
-  logAskStage("drain_start", { threadId, origin })
-
-  let lease: { acquired: boolean; runId?: string; duplicate?: boolean } | undefined
-  let retryCount = 0
-  const maxRetries = 5
-
-  while (retryCount <= maxRetries) {
-    lease = await runtimeStore.acquireRunLock(threadId, 60_000, `queue:${threadId}`)
-    if (lease.acquired && lease.runId) {
-      break
-    }
-    retryCount += 1
-    if (retryCount <= maxRetries) {
-      const backoffMs = Math.min(500 * Math.pow(2, retryCount), 4000)
-      logAskStage("drain_lease_retry", { threadId, origin, retryCount, backoffMs })
-      await new Promise((resolve) => setTimeout(resolve, backoffMs))
-    }
-  }
-
-  if (!lease?.acquired || !lease?.runId) {
-    logAskStage("drain_lease_refused", { threadId, origin, retryCount })
-    return
-  }
-  logAskStage("drain_lease_acquired", { threadId, origin, leaseRunId: lease.runId })
-
-  let heartbeat: ReturnType<typeof setInterval> | undefined
-  try {
-    heartbeat = setInterval(() => {
-      void runtimeStore.refreshRunLock(threadId, lease.runId as string, 60_000)
-    }, 20_000)
-
-    await runtimeStore.refreshRunLock(threadId, lease.runId, 60_000)
-    const nextRun = await queueStore.peekNextRun(threadId)
-    if (!nextRun) {
-      logAskStage("drain_queue_empty", { threadId, origin, leaseRunId: lease.runId })
-      return
-    }
-
-    logAskStage("drain_run_dequeued", {
-      threadId,
-      origin,
-      leaseRunId: lease.runId,
-      queueRunId: nextRun.id,
-      interactionId: nextRun.interactionId,
-      queuedMs: Date.now() - nextRun.createdAt,
-    })
-
-    await executeQueuedAskRun({
-      interactionId: nextRun.interactionId,
-      applicationId: nextRun.applicationId,
-      token: nextRun.token,
-      channelId: nextRun.channelId,
-      userId: nextRun.userId,
-      prompt: nextRun.prompt,
-    })
-    await queueStore.removeRun(nextRun)
-    logAskStage("drain_run_removed", {
-      threadId,
-      origin,
-      leaseRunId: lease.runId,
-      queueRunId: nextRun.id,
-      elapsedMs: Date.now() - drainStartedAt,
-    })
-  } finally {
-    if (heartbeat) {
-      clearInterval(heartbeat)
-    }
-    await runtimeStore.releaseRunLock(threadId, lease.runId)
-    logAskStage("drain_lease_released", {
-      threadId,
-      origin,
-      leaseRunId: lease.runId,
-      elapsedMs: Date.now() - drainStartedAt,
-    })
-  }
-
-  const remainingRun = await queueStore.peekNextRun(threadId)
-  if (remainingRun) {
-    logAskStage("drain_more_work", {
-      threadId,
-      origin,
-      nextQueueRunId: remainingRun.id,
-    })
-    await triggerThreadDrain(threadId, origin)
-    return
-  }
-  logAskStage("drain_done", { threadId, origin, elapsedMs: Date.now() - drainStartedAt })
 }
 
 export default async function handler(
@@ -2691,15 +2533,7 @@ export default async function handler(
     const internalTimestamp = Array.isArray(internalTimestampHeader) ? internalTimestampHeader[0] || "" : internalTimestampHeader || ""
 
     if (internalSignature && internalTimestamp && verifyInternalDispatch(body, internalTimestamp, internalSignature)) {
-      const payload = JSON.parse(body) as Partial<InternalDrainRequest>
-      if (payload.type === "internal-drain-thread" && typeof payload.threadId === "string" && payload.threadId) {
-        const origin = getRequestOrigin(req)
-        await drainThreadAskQueue(payload.threadId, origin)
-        await sendNodeResponse(res, json({ ok: true }))
-        return
-      }
-
-      await sendNodeResponse(res, json({ error: "Invalid internal payload" }, 400))
+      await sendNodeResponse(res, json({ ok: true }))
       return
     }
 

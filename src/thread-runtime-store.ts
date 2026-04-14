@@ -75,6 +75,7 @@ async function writeRunLock(
     access: "private",
     allowOverwrite: true,
     contentType: "application/json",
+    cacheControlMaxAge: 0,
   })
 }
 
@@ -265,6 +266,7 @@ export class ThreadRuntimeStore {
         access: "private",
         allowOverwrite: true,
         contentType: "application/json",
+        cacheControlMaxAge: 0,
       })
       console.info("lock.released_marker_written", { threadId, runId })
     } catch (err) {

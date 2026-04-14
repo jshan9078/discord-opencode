@@ -171,6 +171,26 @@ export class ThreadRuntimeStore {
     return { acquired: true, runId }
   }
 
+  async refreshRunLock(threadId: string, runId: string, ttlMs = 90_000): Promise<boolean> {
+    const current = await this.get(threadId)
+    if (!current.runLock || current.runLock.runId !== runId) {
+      return false
+    }
+
+    const now = Date.now()
+    await this.set(threadId, {
+      ...current,
+      runLock: {
+        ...current.runLock,
+        startedAt: current.runLock.startedAt,
+        expiresAt: now + ttlMs,
+      },
+      updatedAt: now,
+    })
+
+    return true
+  }
+
   async releaseRunLock(threadId: string, runId: string): Promise<void> {
     const current = await this.get(threadId)
     if (!current.runLock || current.runLock.runId !== runId) {

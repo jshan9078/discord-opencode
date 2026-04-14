@@ -1722,7 +1722,7 @@ async function processDeleteInteraction(interaction: Interaction, channelId: str
 async function processAskInteraction(interaction: Interaction, prompt: string): Promise<void> {
   let lockRunId: string | undefined
   let lockThreadId: string | undefined
-  let lockStore: { releaseRunLock(threadId: string, runId: string): Promise<void> } | undefined
+  let lockStore: { releaseRunLock(threadId: string, runId: string): Promise<void>; refreshRunLock(threadId: string, runId: string, ttlMs?: number): Promise<boolean> } | undefined
   try {
   const [
     { ChannelStateStore },
@@ -1872,15 +1872,25 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
     )
     return
   }
-  const lock = await threadRuntimeStore.acquireRunLock(conversationId, 15 * 60_000, interaction.id)
+  let lock = await threadRuntimeStore.acquireRunLock(conversationId, 5 * 60_000, interaction.id)
   if (!lock.acquired || !lock.runId) {
     if (lock.duplicate) {
       return
     }
+
+    const existingState = await threadRuntimeStore.get(conversationId)
+    const existingLock = existingState.runLock
+    if (existingLock && Date.now() > existingLock.expiresAt) {
+      await threadRuntimeStore.releaseRunLock(conversationId, existingLock.runId)
+      lock = await threadRuntimeStore.acquireRunLock(conversationId, 90_000, interaction.id)
+    }
+  }
+
+  if (!lock.acquired || !lock.runId) {
     await sendFollowup(
       interaction.application_id,
       interaction.token,
-      "Another /ask run is already in progress for this thread. Wait for it to finish, then try again.",
+      "Another /ask run is already in progress for this thread. Wait for it to finish, or run /delete to reset the thread session.",
       undefined,
       effectiveThreadId,
     )
@@ -2183,6 +2193,10 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
       if (messageId) {
         todoProgressMessageId = messageId
       }
+    }
+
+    if (lockStore && lockRunId && lockThreadId) {
+      await lockStore.refreshRunLock(lockThreadId, lockRunId)
     }
 
     const result = await executePromptForChannel(

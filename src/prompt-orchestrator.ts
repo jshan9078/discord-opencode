@@ -56,7 +56,12 @@ export async function executePromptForChannel(
 > {
   const { providerId, modelId } = selection
 
-  await syncProviderRegistry(client, registry)
+  try {
+    await syncProviderRegistry(client, registry)
+  } catch {
+    // Do not block prompt execution if provider registry sync fails.
+    // Selection validation is already done upstream.
+  }
 
   let authPrimed = false
   if (options.providerAuth) {

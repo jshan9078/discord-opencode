@@ -45,5 +45,10 @@ describe("mapInteractionCommandToText", () => {
       type: "command",
       text: "checkpoint",
     })
+
+    expect(mapInteractionCommandToText({ name: "delete" })).toEqual({
+      type: "command",
+      text: "delete",
+    })
   })
 })

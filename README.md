@@ -224,6 +224,7 @@ ANTHROPIC_API_KEY=sk-ant-... # Anthropic
 | `/opencode [project]` | Start empty session or pick resume/new for a project |
 | `/ask <prompt>` | Send a coding request (thread only) |
 | `/checkpoint` | Snapshot current thread session for resume |
+| `/delete` | Stop and remove current thread session (no checkpoint) |
 | `/health-check` | Fast bridge health check |
 | `/update` | Refresh provider registry snapshot |
 | `/providers` | List available providers |

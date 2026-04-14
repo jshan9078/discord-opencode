@@ -48,5 +48,6 @@ describe("parseDiscordCommand", () => {
       project: "anomalyco/opencode",
     })
     expect(parseDiscordCommand("checkpoint")).toEqual({ type: "checkpoint" })
+    expect(parseDiscordCommand("delete")).toEqual({ type: "delete" })
   })
 })

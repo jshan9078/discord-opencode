@@ -74,6 +74,9 @@ export function mapInteractionCommandToText(
     case "checkpoint": {
       return { type: "command", text: "checkpoint" }
     }
+    case "delete": {
+      return { type: "command", text: "delete" }
+    }
     default:
       return { type: "command", text: "help" }
   }

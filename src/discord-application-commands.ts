@@ -159,5 +159,10 @@ export function buildApplicationCommands(): DiscordApplicationCommand[] {
       description: "Save thread state as a resumable checkpoint",
       type: 1,
     },
+    {
+      name: "delete",
+      description: "Stop and remove this thread session without checkpointing",
+      type: 1,
+    },
   ]
 }

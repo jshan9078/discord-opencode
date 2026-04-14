@@ -137,7 +137,24 @@ export class WorkspaceEntryStore {
   }
 
   async getThreadBinding(threadId: string): Promise<ThreadBinding | undefined> {
-    return await readJson<ThreadBinding | undefined>(threadBindingPath(threadId), undefined)
+    const value = await readJson<unknown>(threadBindingPath(threadId), undefined)
+    if (!value || typeof value !== "object") {
+      return undefined
+    }
+
+    const raw = value as Record<string, unknown>
+    if (typeof raw.threadId !== "string" || typeof raw.userId !== "string") {
+      return undefined
+    }
+
+    return {
+      threadId: raw.threadId,
+      userId: raw.userId,
+      project: typeof raw.project === "string" ? raw.project : undefined,
+      workspaceEntryId: typeof raw.workspaceEntryId === "string" ? raw.workspaceEntryId : undefined,
+      hasCustomName: raw.hasCustomName === true,
+      updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : Date.now(),
+    }
   }
 
   async setThreadBinding(binding: ThreadBinding): Promise<void> {

@@ -1674,6 +1674,51 @@ async function processCheckpointInteraction(interaction: Interaction, channelId:
   }
 }
 
+async function processDeleteInteraction(interaction: Interaction, channelId: string, inThread: boolean): Promise<void> {
+  try {
+    if (!inThread) {
+      await sendFollowup(interaction.application_id, interaction.token, "Run /delete inside a thread.")
+      return
+    }
+
+    const [{ ThreadRuntimeStore }, { WorkspaceEntryStore }, { getSandboxManager }] = await Promise.all([
+      import("../../src/thread-runtime-store.js"),
+      import("../../src/workspace-entry-store.js"),
+      import("../../src/sandbox-manager.js"),
+    ])
+
+    const runtimeStore = new ThreadRuntimeStore()
+    const workspaceStore = new WorkspaceEntryStore()
+    const sandboxManager = getSandboxManager()
+    const runtime = await runtimeStore.get(channelId)
+
+    if (!runtime.sandboxId) {
+      await sendFollowup(interaction.application_id, interaction.token, "No active sandbox in this thread.")
+      return
+    }
+
+    await sandboxManager.stop(channelId, runtime.sandboxId)
+    await runtimeStore.clear(channelId)
+
+    const binding = await workspaceStore.getThreadBinding(channelId)
+    if (binding?.project && binding.workspaceEntryId) {
+      await workspaceStore.updateEntry(binding.userId, binding.project, binding.workspaceEntryId, {
+        threadId: undefined,
+      })
+    }
+    await workspaceStore.clearThreadBinding(channelId)
+
+    await sendFollowup(
+      interaction.application_id,
+      interaction.token,
+      "Deleted this thread session. Sandbox stopped without checkpointing. Run /opencode in a channel to start or resume again.",
+    )
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error"
+    await sendFollowup(interaction.application_id, interaction.token, `Delete failed: ${message}`)
+  }
+}
+
 async function processAskInteraction(interaction: Interaction, prompt: string): Promise<void> {
   let lockRunId: string | undefined
   let lockThreadId: string | undefined
@@ -2292,12 +2337,16 @@ async function processAskInteraction(interaction: Interaction, prompt: string): 
     )
   } catch (error) {
     console.error("processAskInteraction failed:", error)
-    const message = error instanceof Error ? error.message : "Unknown error"
+    const message = (error instanceof Error
+      ? error.message
+      : typeof error === "object" && error !== null
+        ? JSON.stringify(error)
+        : String(error)).slice(0, 1500)
     try {
-      await sendFollowup(interaction.application_id, interaction.token, `Request failed: ${message}`)
       await updateOriginalResponse(interaction.application_id, interaction.token, `Request failed: ${message}`)
     } catch (followupError) {
       console.error("Failed to send fallback followup:", followupError)
+      await sendFollowup(interaction.application_id, interaction.token, `Request failed: ${message}`)
     }
   } finally {
     if (lockStore && lockRunId && lockThreadId) {
@@ -2612,6 +2661,12 @@ export default async function handler(
 
     if (commandResult.message === "checkpoint:sandbox") {
       waitUntil(processCheckpointInteraction(interaction, currentChannelId, inThread))
+      await sendNodeResponse(res, json({ type: 5 }))
+      return
+    }
+
+    if (commandResult.message === "delete:sandbox") {
+      waitUntil(processDeleteInteraction(interaction, currentChannelId, inThread))
       await sendNodeResponse(res, json({ type: 5 }))
       return
     }

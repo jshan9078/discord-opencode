@@ -253,6 +253,14 @@ export function handleDiscordCommand(
     }
   }
 
+  if (parsed.type === "delete") {
+    return {
+      handled: true,
+      isPrompt: false,
+      message: "delete:sandbox",
+    }
+  }
+
   if (parsed.type === "opencode") {
     return {
       handled: true,

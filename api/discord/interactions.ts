@@ -2399,39 +2399,46 @@ async function drainThreadAskQueue(threadId: string): Promise<void> {
 
   const runtimeStore = new ThreadRuntimeStore()
   const queueStore = new ThreadAskQueueStore()
-  const lease = await runtimeStore.acquireRunLock(threadId, 60_000, `queue:${threadId}`)
-  if (!lease.acquired || !lease.runId) {
-    return
-  }
+  while (true) {
+    const lease = await runtimeStore.acquireRunLock(threadId, 60_000, `queue:${threadId}`)
+    if (!lease.acquired || !lease.runId) {
+      return
+    }
 
-  let heartbeat: ReturnType<typeof setInterval> | undefined
-  try {
-    heartbeat = setInterval(() => {
-      void runtimeStore.refreshRunLock(threadId, lease.runId as string, 60_000)
-    }, 20_000)
+    let heartbeat: ReturnType<typeof setInterval> | undefined
+    try {
+      heartbeat = setInterval(() => {
+        void runtimeStore.refreshRunLock(threadId, lease.runId as string, 60_000)
+      }, 20_000)
 
-    while (true) {
-      await runtimeStore.refreshRunLock(threadId, lease.runId, 60_000)
-      const nextRun = await queueStore.peekNextRun(threadId)
-      if (!nextRun) {
-        return
+      while (true) {
+        await runtimeStore.refreshRunLock(threadId, lease.runId, 60_000)
+        const nextRun = await queueStore.peekNextRun(threadId)
+        if (!nextRun) {
+          break
+        }
+
+        await executeQueuedAskRun({
+          interactionId: nextRun.interactionId,
+          applicationId: nextRun.applicationId,
+          token: nextRun.token,
+          channelId: nextRun.channelId,
+          userId: nextRun.userId,
+          prompt: nextRun.prompt,
+        })
+        await queueStore.removeRun(nextRun)
       }
+    } finally {
+      if (heartbeat) {
+        clearInterval(heartbeat)
+      }
+      await runtimeStore.releaseRunLock(threadId, lease.runId)
+    }
 
-      await executeQueuedAskRun({
-        interactionId: nextRun.interactionId,
-        applicationId: nextRun.applicationId,
-        token: nextRun.token,
-        channelId: nextRun.channelId,
-        userId: nextRun.userId,
-        prompt: nextRun.prompt,
-      })
-      await queueStore.removeRun(nextRun)
+    const remainingRun = await queueStore.peekNextRun(threadId)
+    if (!remainingRun) {
+      return
     }
-  } finally {
-    if (heartbeat) {
-      clearInterval(heartbeat)
-    }
-    await runtimeStore.releaseRunLock(threadId, lease.runId)
   }
 }
 

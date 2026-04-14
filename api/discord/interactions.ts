@@ -1794,7 +1794,6 @@ async function executeQueuedAskRun(run: AskQueueRunRequest): Promise<void> {
     { createSandboxOpencodeClient },
     { executePromptForChannel },
     { getSandboxManager },
-    { getRecoveryContext },
     { loadProviderRegistry },
     { SelectionStore },
     { ThreadRuntimeStore },
@@ -1804,12 +1803,11 @@ async function executeQueuedAskRun(run: AskQueueRunRequest): Promise<void> {
     import("../../src/oauth-token-store.js"),
     import("../../src/opencode-client.js"),
     import("../../src/prompt-orchestrator.js"),
-      import("../../src/sandbox-manager.js"),
-      import("../../src/discord-message-fetcher.js"),
-      import("../../src/provider-registry-store.js"),
-      import("../../src/selection-store.js"),
-      import("../../src/thread-runtime-store.js"),
-    ])
+    import("../../src/sandbox-manager.js"),
+    import("../../src/provider-registry-store.js"),
+    import("../../src/selection-store.js"),
+    import("../../src/thread-runtime-store.js"),
+  ])
 
     const channelId = run.channelId
     const userId = run.userId
@@ -2088,7 +2086,10 @@ async function executeQueuedAskRun(run: AskQueueRunRequest): Promise<void> {
     const hadExistingSession = Boolean(await threadRuntimeStore.getSession(conversationId))
 
     const recoveryContext = isNewSandbox
-      ? await getRecoveryContext(stateStore, conversationId, prompt)
+      ? await (async () => {
+          const { getRecoveryContext } = await import("../../src/discord-message-fetcher.js")
+          return getRecoveryContext(stateStore, conversationId, prompt)
+        })()
       : undefined
 
     let responseBuffer = ""

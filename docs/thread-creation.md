@@ -24,7 +24,8 @@ When `/opencode` is run in a channel (not a thread):
 
 1. Creates a new Discord thread via `createThreadFromChannel()`
 2. Starts a sandbox session via `startThreadSession()`
-3. Returns a message directing user to the new thread
+3. **Pings the user in the thread** once sandbox is ready and repo is cloned
+4. Returns a message directing user to the new thread
 
 ## Flow Diagram
 
@@ -42,9 +43,12 @@ SandboxManager.getOrCreate() --> Creates Vercel Sandbox + starts OpenCode server
     |
     v
 WorkspaceEntryStore.setThreadBinding() --> Persists thread<->sandbox binding
+    |
+    v
+sendFollowup() --> Pings user in thread: "Your sandbox is ready!"
 ```
 
 ## Two Modes
 
-1. **Empty sandbox** (`/opencode` without args): Creates fresh sandbox from raw baseline
-2. **With repo** (`/opencode <repo-url>`): Creates sandbox and clones specified repository
+1. **Empty sandbox** (`/opencode` without args): Creates fresh sandbox, pings user with "Your sandbox is ready! Use /ask in this thread to begin."
+2. **With repo** (`/opencode <repo-url>`): Creates sandbox and clones repository, pings user with "Your sandbox is ready with the repository cloned! Use /ask in this thread to begin."

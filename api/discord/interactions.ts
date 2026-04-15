@@ -1365,11 +1365,13 @@ async function handleOpencodeCommand(interaction: Interaction, projectInput?: st
   }
 
   const rawBaselineSnapshotId = await ensureRawBaselineSnapshot()
+  console.log(`[handleOpencodeCommand] Starting thread session, threadId=${threadId}, repoUrl=${parsedProject.repoUrl}`)
   await startThreadSession(threadId, parsedProject.repoUrl, parsedProject.branch, {
     snapshotId: rawBaselineSnapshotId,
     resetSessions: true,
     cloneRepoOnSnapshot: true,
   })
+  console.log(`[handleOpencodeCommand] Thread session started successfully, threadId=${threadId}`)
   const entry = await workspaceStore.createEntry({
     userId,
     project: parsedProject.project,
@@ -1684,6 +1686,8 @@ async function executeQueuedAskRun(run: AskQueueRunRequest): Promise<void> {
     bindingProject: threadBinding?.project,
     bindingWorkspaceEntryId: threadBinding?.workspaceEntryId,
   })
+  console.log(`[executeQueuedAskRun] threadRuntimeState=`, threadRuntimeState)
+  console.log(`[executeQueuedAskRun] threadBinding=`, threadBinding)
 
   if (!threadBinding && threadRuntimeState.sandboxId) {
     logAskStage("execute_binding_missing", {

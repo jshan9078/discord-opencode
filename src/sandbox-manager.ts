@@ -142,6 +142,7 @@ export class SandboxManager {
     repoUrl?: string,
     branch = "main",
   ): Promise<SandboxContext> {
+    console.log(`[createFromSnapshot] Creating from snapshot=${snapshotId}, repoUrl=${repoUrl}, branch=${branch}`)
     const sandbox = await Sandbox.create({
       runtime: this.options.runtime,
       resources: { vcpus: this.options.vcpus },
@@ -152,12 +153,18 @@ export class SandboxManager {
         snapshotId,
       },
     })
+    console.log(`[createFromSnapshot] Sandbox created, sandboxId=${sandbox.sandboxId}`)
 
     if (repoUrl) {
+      console.log(`[createFromSnapshot] Cloning repo=${repoUrl} into sandbox`)
       await this.cloneRepoIntoSandbox(sandbox, repoUrl, branch)
+      console.log(`[createFromSnapshot] Repo cloned successfully`)
+    } else {
+      console.log(`[createFromSnapshot] No repoUrl provided, skipping clone`)
     }
 
     const context = await this.ensureOpenCodeServer(sandbox)
+    console.log(`[createFromSnapshot] OpenCode server ready, sandboxId=${sandbox.sandboxId}`)
     this.cache.set(channelId, context)
     return context
   }

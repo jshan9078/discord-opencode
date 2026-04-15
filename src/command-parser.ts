@@ -13,7 +13,7 @@ export type ParsedCommand =
   | { type: "auth_connect"; providerId: string; methodHint?: string }
   | { type: "auth_set_key"; providerId: string }
   | { type: "auth_disconnect"; providerId: string }
-  | { type: "opencode"; project?: string }
+  | { type: "opencode"; project?: string; prompt?: string }
   | { type: "checkpoint" }
   | { type: "delete" }
   | { type: "help" }

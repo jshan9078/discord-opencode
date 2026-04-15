@@ -225,12 +225,14 @@ export function handleDiscordCommand(
   }
 
   if (parsed.type === "auth_set_key") {
+    const envVarName = `${parsed.providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`
     return {
       handled: true,
       isPrompt: false,
       message:
         `API keys are never entered via Discord.\n` +
-        `Run locally: bridge auth set-key ${parsed.providerId} --stdin`,
+        `Set this environment variable in your Vercel project:\n` +
+        `\`${envVarName}\``,
     }
   }
 

@@ -18,7 +18,7 @@ POST /channels/{channelId}/threads
 2. Stores sandbox context in `ThreadRuntimeStore`
 3. Optionally clones a GitHub repo into the sandbox
 
-### `handleOpencodeCommand()` (lines 1298-1380)
+### `handleOpencodeCommand()` (lines 1298-1412)
 
 When `/opencode` is run in a channel (not a thread):
 

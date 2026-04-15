@@ -2,23 +2,29 @@
 
 Located in `src/sandbox-manager.ts`.
 
-## `getOrCreate()` (lines 60-137)
+## `getOrCreate()` (line 60)
 
 1. Checks if sandbox is cached and healthy
 2. If not, creates a new sandbox or resumes existing one by ID
 
-## `createSandbox()` (lines 179-198)
+## `createFromSnapshot()` (line 139)
+
+1. Creates sandbox from a Vercel Snapshot
+2. If `repoUrl` provided, calls `cloneRepoIntoSandbox()`
+3. Calls `ensureOpenCodeServer()` to start OpenCode
+
+## `createSandbox()` (line 186)
 
 1. Creates Vercel Sandbox with Node 24 runtime
 2. If `repoUrl` provided, calls `cloneRepoIntoSandbox()`
 
-## `cloneRepoIntoSandbox()` (lines 248-306)
+## `cloneRepoIntoSandbox()` (line 258)
 
 1. Runs `git clone --depth=1 --branch {branch} {repoUrl} /vercel/sandbox`
 2. Configures GitHub token via `GIT_ASKPASS` for private repos
 3. Verifies clone succeeded
 
-## `ensureOpenCodeServer()` (lines 200-246)
+## `ensureOpenCodeServer()` (line 207)
 
 1. Installs OpenCode if needed
 2. Injects user config from Blob storage

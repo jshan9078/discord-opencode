@@ -1335,6 +1335,8 @@ async function handleOpencodeCommand(interaction: Interaction, projectInput?: st
       updatedAt: Date.now(),
     })
 
+    await sendFollowup(interaction.application_id, interaction.token, `<@${userId}> Your sandbox is ready! Use /ask in this thread to begin.`, undefined, threadId)
+
     return json({
       type: 4,
       data: {
@@ -1370,6 +1372,8 @@ async function handleOpencodeCommand(interaction: Interaction, projectInput?: st
     workspaceEntryId: entry.id,
     updatedAt: Date.now(),
   })
+
+  await sendFollowup(interaction.application_id, interaction.token, `<@${userId}> Your sandbox is ready with the repository cloned! Use /ask in this thread to begin.`, undefined, threadId)
 
   return json({
     type: 4,

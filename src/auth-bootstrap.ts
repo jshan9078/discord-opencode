@@ -48,41 +48,44 @@ export async function ensureProviderAuth(
     return { type: "ok" }
   }
 
-  const provider = registry.getProvider(providerId)
-  if (!provider) {
-    return { type: "needs_local_oauth" }
-  }
-
+  // First, try stored credentials
   const stored = credentials.getProviderAuth(providerId)
   if (stored) {
     try {
       await client.auth.set({ path: { id: providerId }, body: stored })
       return { type: "ok" }
     } catch {
-      // Continue to try auth methods
+      // Continue to try other auth methods
     }
+  }
+
+  // Then, try API key from environment variables
+  // This works for providers that use separate API endpoints (like opencode-go)
+  // where the sandbox server doesn't know about the provider's auth methods
+  const envApiKey = getProviderApiKeyFromEnv(providerId)
+  if (envApiKey) {
+    try {
+      await client.auth.set({ path: { id: providerId }, body: { type: "api", key: envApiKey } })
+      return { type: "ok" }
+    } catch {
+      // Continue to try other auth methods
+    }
+  }
+
+  // If no env var API key, check provider's declared auth methods
+  const provider = registry.getProvider(providerId)
+  if (!provider) {
+    return { type: "needs_local_oauth" }
   }
 
   const methods = provider.methods
   const hasOAuth = methods.some((m) => m.kind === "oauth")
   const hasApiKey = methods.some((m) => m.kind === "api-key")
-  console.log("[AuthBootstrap] Provider methods for", providerId, ":", methods, "hasApiKey:", hasApiKey)
-  const envApiKey = getProviderApiKeyFromEnv(providerId)
 
-  if (envApiKey) {
-    try {
-      await client.auth.set({ path: { id: providerId }, body: { type: "api", key: envApiKey } })
-      return { type: "ok" }
-    } catch (error) {
-      console.log("[AuthBootstrap] auth.set failed:", error instanceof Error ? error.message : String(error))
-      // Continue to try other auth methods
-    }
-  }
-
-  if (hasApiKey && !stored) {
+  if (hasApiKey) {
     return { type: "needs_local_api_key" }
   }
-  if (hasOAuth && !stored) {
+  if (hasOAuth) {
     return { type: "needs_local_oauth" }
   }
 

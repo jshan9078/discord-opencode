@@ -635,6 +635,7 @@ export async function relaySessionEvents(
           }
         }
         const errorMsg = asText(event.properties?.error) || "Session error"
+        console.log("[EventRelay] session.error:", JSON.stringify(event.properties))
         await sink.onError(errorMsg)
         hadError = true
         continue

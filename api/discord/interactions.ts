@@ -2168,6 +2168,7 @@ async function executeQueuedAskRun(run: AskQueueRunRequest): Promise<void> {
         providerAuth,
         runtimeContext,
         cwd: sessionCwd,
+        correlationToken: `discord-${run.interactionId}-${Date.now().toString(36)}`,
       },
     )
 

@@ -381,6 +381,10 @@ export async function relaySessionEvents(
         continue
       }
 
+      if (correlationToken) {
+        discoverTargetFromMessage(event.properties)
+      }
+
       if (event.type === "message.part.delta") {
         const partId = asText(event.properties?.partID)
         const delta = asText(event.properties?.delta)

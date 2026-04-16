@@ -214,6 +214,7 @@ Stop and remove the current thread session without checkpointing.
 **Behavior:**
 - Terminates the sandbox immediately
 - Removes session data (no resume possible)
+- Deletes the associated checkpoint snapshot
 - Clears channel state for this thread
 
 ## Command Flow

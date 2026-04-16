@@ -1,7 +1,7 @@
 import { createHmac } from "crypto"
 import nacl from "tweetnacl"
 import { waitUntil } from "@vercel/functions"
-import { Sandbox } from "@vercel/sandbox"
+import { Sandbox, Snapshot } from "@vercel/sandbox"
 import { sendDiscordRateLimitedRequest } from "../../src/discord-rate-limited-fetch.js"
 import type { SandboxContext } from "../../src/sandbox-manager.js"
 
@@ -1464,8 +1464,14 @@ async function processDeleteInteraction(interaction: Interaction, channelId: str
 
     const binding = await workspaceStore.getThreadBinding(channelId)
     if (binding?.project && binding.workspaceEntryId) {
+      const entry = await workspaceStore.getEntry(binding.userId, binding.project, binding.workspaceEntryId)
+      if (entry?.snapshotId) {
+        const snapshot = await Snapshot.get({ snapshotId: entry.snapshotId })
+        await snapshot.delete()
+      }
       await workspaceStore.updateEntry(binding.userId, binding.project, binding.workspaceEntryId, {
         threadId: undefined,
+        snapshotId: undefined,
       })
     }
     await workspaceStore.clearThreadBinding(channelId)
@@ -1477,6 +1483,7 @@ async function processDeleteInteraction(interaction: Interaction, channelId: str
     )
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error"
+    console.error("processDeleteInteraction failed:", error)
     await sendFollowup(interaction.application_id, interaction.token, `Delete failed: ${message}`)
   }
 }

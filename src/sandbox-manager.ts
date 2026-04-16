@@ -372,12 +372,21 @@ export class SandboxManager {
   }
 
   private async getGitHubUserInfo(): Promise<{ name?: string; email?: string }> {
+    if (!process.env.GITHUB_TOKEN) {
+      return {}
+    }
     try {
-      const { execSync } = await import("child_process")
-      const output = execSync("gh api user --jq '{name: .name, email: .email}'", {
-        env: { ...process.env, GITHUB_TOKEN: process.env.GITHUB_TOKEN },
-      }).toString()
-      return JSON.parse(output)
+      const response = await fetch("https://api.github.com/user", {
+        headers: {
+          Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+          Accept: "application/vnd.github.v3+json",
+        },
+      })
+      if (!response.ok) {
+        return {}
+      }
+      const data = (await response.json()) as { name?: string; email?: string }
+      return { name: data.name, email: data.email }
     } catch {
       return {}
     }

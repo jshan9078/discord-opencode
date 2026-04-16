@@ -28,10 +28,47 @@ You (Discord)             ←    Streams results back
 | Layer | Technology |
 |-------|------------|
 | Hosting | Vercel Functions |
-| Compute | Vercel Sandboxes |
+| Compute | Vercel Sandboxes (beta, persistent mode) |
 | Persistence | Vercel Blob |
 | Discord | discord.js |
 | AI SDK | @opencode-ai/sdk |
+| Sandbox SDK | @vercel/sandbox@beta |
+
+## Sandbox Architecture
+
+OpenCord uses **Vercel Sandboxes in persistent mode** (beta SDK). This gives each Discord thread a long-lived, resumable sandbox with automatic filesystem snapshots.
+
+### How Persistent Sandboxes Work
+
+1. **Named sandboxes** — Each Discord thread gets a sandbox named `discord-channel-{channelId}`
+2. **Auto-snapshot on stop** — When a sandbox stops, its filesystem is automatically snapshotted
+3. **Auto-resume on request** — When `/ask` runs, the sandbox resumes from its last saved state automatically
+4. **No manual checkpointing required** — The persistent mode handles state retention
+
+### Session Memory vs Filesystem
+
+The sandbox **filesystem persists** across stops and resumes. However, **OpenCode's file-read context does not persist**. This means:
+
+- Files you created or edited are preserved
+- Conversation history is preserved
+- The agent remembers previous questions and discussions
+- The agent may need to re-read files before editing them after a resume (the "must read before edit" check resets)
+
+### Timeout
+
+Sandboxes have a **45-minute session timeout**. When exceeded:
+
+1. Sandbox stops automatically
+2. Filesystem state is snapshotted automatically
+3. Next `/ask` resumes the sandbox from the saved state
+
+### Snapshot Expiration
+
+Automatic snapshots expire after **7 days**. Use `/checkpoint` to create explicit, named snapshots with longer expiration for critical project states.
+
+### Explicit Snapshots
+
+The `/checkpoint` command creates an explicit snapshot stored in `WorkspaceEntryStore`. This is useful for bookmarking a known-good state for a project. For normal use, the automatic snapshots from persistent mode are sufficient.
 
 ## Setup
 
@@ -190,13 +227,31 @@ Channel state (repo, branch) is stored on the local filesystem.
 
 ### Sandbox Lifecycle
 
-OpenCord uses **persistent sandboxes** from Vercel. Each Discord thread maps to one named sandbox that automatically saves its state when stopped.
+```
+New /ask                 → Sandbox.create() with name
+                              ↓
+                         Sandbox starts, OpenCode boots
+                              ↓
+                         Agent works, edits files
+                              ↓
+                         45-min timeout or stop
+                              ↓
+                         Auto-snapshot of filesystem
+                              ↓
+Resume /ask              → Sandbox.get() by name
+                              ↓
+                         Filesystem restored from snapshot
+                              ↓
+                         OpenCode restarts (conversation preserved, file-read context lost)
+                              ↓
+                         Agent may need to re-read files before editing
+```
 
-- **Creation**: Sandbox is created with a unique name per thread and auto-restores on resume
-- **Clone**: Git repo is cloned into `/vercel/sandbox` with GitHub token via `GIT_ASKPASS`
-- **Boot**: OpenCode server starts on port 4096 with user config injected from Blob
-- **Persistence**: When a sandbox stops, its filesystem state is automatically snapshotted
-- **Resume**: When `/ask` runs again, the sandbox resumes from its last saved state
+Key points:
+- **Filesystem**: Persists across sessions via automatic snapshots
+- **Conversation history**: Preserved across resumes
+- **File-read context**: Lost on resume — agent may need to re-read files before editing
+- **Git clone**: Only happens once per sandbox; subsequent sessions resume the existing `/vercel/sandbox`
 
 ## Documentation
 

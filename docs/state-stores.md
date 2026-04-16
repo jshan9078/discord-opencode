@@ -7,8 +7,11 @@
 | Sandbox name | Vercel Sandbox identifier (unique name per channel) |
 | Session ID | OpenCode session |
 | Run locks | Prevents concurrent `/ask` runs |
+| OpenCode password | Auth credential for OpenCode server |
 
 **Storage**: Vercel Blob (`runtime/threads/{threadId}.json`)
+
+**Note**: The sandbox name is used to resume a persistent sandbox after the 45-minute session timeout. The sandbox's filesystem is automatically snapshotted on stop.
 
 ## WorkspaceEntryStore (`workspace-entry-store.ts`)
 

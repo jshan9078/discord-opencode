@@ -49,7 +49,6 @@ export async function executePromptForChannel(
     providerAuth?: Record<string, unknown>
     runtimeContext?: string
     cwd?: string
-    correlationToken?: string
   } = {},
 ): Promise<
   | {
@@ -141,7 +140,6 @@ export async function executePromptForChannel(
   const relayPromise = relaySessionEvents(client, sink, sessionId, {
     maxIdleMs: 45_000,
     maxTotalMs: 10 * 60_000,
-    correlationToken: options.correlationToken,
   })
   const finalPrompt = options.recoveryContext
     ? [
@@ -166,7 +164,6 @@ export async function executePromptForChannel(
         modelID: modelId,
       },
       parts: [{ type: "text", text: finalPrompt }],
-      ...(options.correlationToken ? { system: `[CORRELATION: ${options.correlationToken}]` } : {}),
     },
   })
   logPromptStage("prompt_async_done", { threadId, sessionId })

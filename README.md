@@ -1,6 +1,7 @@
-# Discord Bridge
-
-A serverless Discord bot that bridges your Discord server to AI-powered coding agents running in Vercel Sandboxes. Code, debug, and ship directly from Discord.
+<p align="center">
+  <h1>OpenCord</h1>
+  <p>A serverless Discord bot that bridges your Discord server to AI-powered coding agents running in Vercel Sandboxes. Code, debug, and ship directly from Discord.</p>
+</p>
 
 ## How It Works
 
@@ -49,7 +50,7 @@ You (Discord)             ←    Streams results back
 
 ```bash
 git clone <this-repo>
-cd discord-bridge
+cd opencord
 pnpm install
 ```
 

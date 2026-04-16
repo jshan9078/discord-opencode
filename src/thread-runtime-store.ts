@@ -137,6 +137,7 @@ export class ThreadRuntimeStore {
         access: "private",
         allowOverwrite: true,
         contentType: "application/json",
+        cacheControlMaxAge: 0,
       },
     )
     console.info("ThreadRuntimeStore.set wrote", { threadId })

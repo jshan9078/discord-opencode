@@ -2212,12 +2212,15 @@ async function processAskInteraction(interaction: Interaction, prompt: string, o
         }
         const repoUrl = channelState.repoUrl
         const branch = channelState.branch || "main"
+        logAskStage("ask_starting_session", { threadId, repoUrl, branch })
         await startThreadSession(threadId, repoUrl, branch, {
           snapshotId: rawBaselineSnapshotId,
           resetSessions: true,
           cloneRepoOnSnapshot: true,
         })
+        logAskStage("ask_session_started_checking_store", { threadId })
         runtimeState = await runtimeStore.get(threadId)
+        logAskStage("ask_runtime_state", { threadId, runtimeState })
         if (!runtimeState.sandboxId) {
           await sendFollowup(interaction.application_id, interaction.token, "Failed to start session for /ask.")
           return
@@ -2226,12 +2229,15 @@ async function processAskInteraction(interaction: Interaction, prompt: string, o
       } else {
         const repoUrl = channelState.repoUrl
         const branch = channelState.branch || "main"
+        logAskStage("ask_starting_session", { channelId, repoUrl, branch })
         await startThreadSession(channelId, repoUrl, branch, {
           snapshotId: rawBaselineSnapshotId,
           resetSessions: true,
           cloneRepoOnSnapshot: true,
         })
+        logAskStage("ask_session_started_checking_store", { channelId })
         runtimeState = await runtimeStore.get(channelId)
+        logAskStage("ask_runtime_state", { channelId, runtimeState })
         if (!runtimeState.sandboxId) {
           await sendFollowup(interaction.application_id, interaction.token, "Failed to start session for /ask.")
           return

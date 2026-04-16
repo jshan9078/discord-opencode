@@ -376,9 +376,11 @@ export async function relaySessionEvents(
 
       lastEventAt = Date.now()
 
-      if (!correlationToken && isTerminalSessionEvent(event, hadError)) {
+      if (isTerminalSessionEvent(event, hadError)) {
         sawTerminalEvent = true
-        continue
+        if (!correlationToken) {
+          continue
+        }
       }
 
       if (correlationToken) {

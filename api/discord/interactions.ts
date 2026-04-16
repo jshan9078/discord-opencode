@@ -501,7 +501,7 @@ async function handleAutocompleteInteraction(interaction: Interaction): Promise<
     return autocompleteChoices(choices)
   }
 
-  if (focused.name === "project") {
+  if (focused.name === "repo") {
     const { getGitHubClient } = await import("../../src/github-client.js")
     const gh = getGitHubClient()
     if (!gh) {

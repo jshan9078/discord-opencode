@@ -33,6 +33,7 @@ type Interaction = {
   token: string
   application_id: string
   channel_id?: string
+  guild_id?: string
   member?: {
     user?: {
       id: string
@@ -43,6 +44,7 @@ type Interaction = {
   }
   message?: {
     id: string
+    parent_id?: string
   }
   data: {
     custom_id?: string
@@ -2172,12 +2174,26 @@ async function processAskInteraction(interaction: Interaction, prompt: string, o
 
     const runtimeStore = new ThreadRuntimeStore()
     const channelStateStore = new ChannelStateStore()
-    const channelState = channelStateStore.get(channelId)
+    let channelState = channelStateStore.get(channelId)
     let runtimeState = await runtimeStore.get(channelId)
     const inThread = await isThreadChannel(channelId)
 
+    let effectiveChannelId = channelId
+    if (inThread && !channelState.repoUrl) {
+      const parentId = interaction.message?.parent_id
+      if (parentId) {
+        logAskStage("ask_fallback_to_parent", { threadId: channelId, parentId })
+        const parentState = channelStateStore.get(parentId)
+        if (parentState.repoUrl) {
+          channelState = parentState
+          effectiveChannelId = parentId
+        }
+      }
+    }
+
     logAskStage("ask_state_check", {
       threadId: channelId,
+      effectiveChannelId,
       interactionId: interaction.id,
       inThread,
       hasSandboxId: Boolean(runtimeState.sandboxId),

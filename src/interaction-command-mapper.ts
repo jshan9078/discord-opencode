@@ -34,6 +34,27 @@ function optionValue(data: InteractionCommandData, name: string): string | undef
   return String(option.value)
 }
 
+function extractAttachmentsFromOptions(options: InteractionOption[] | undefined): Array<{ url: string; filename: string; content_type?: string }> | undefined {
+  if (!options) return undefined
+
+  const attachmentOptions = options.filter((opt) => opt.type === 11 && opt.attachments && opt.attachments.length > 0)
+  if (attachmentOptions.length === 0) return undefined
+
+  const allAttachments: Array<{ url: string; filename: string; content_type?: string }> = []
+  for (const opt of attachmentOptions) {
+    if (opt.attachments) {
+      for (const att of opt.attachments) {
+        allAttachments.push({
+          url: att.url,
+          filename: att.filename,
+          content_type: att.content_type,
+        })
+      }
+    }
+  }
+  return allAttachments.length > 0 ? allAttachments : undefined
+}
+
 export function mapInteractionCommandToText(
   data: InteractionCommandData,
 ): { type: "command" | "prompt"; text: string; attachments?: Array<{ url: string; filename: string; content_type?: string }> } {
@@ -41,7 +62,7 @@ export function mapInteractionCommandToText(
   switch (commandName) {
     case "ask": {
       const prompt = optionValue(data, "prompt") || ""
-      const images = data.attachments
+      const images = extractAttachmentsFromOptions(data.options) ?? data.attachments
       return { type: "prompt", text: prompt, attachments: images }
     }
     case "project": {

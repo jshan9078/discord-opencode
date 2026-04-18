@@ -714,6 +714,9 @@ function providerEnvCandidates(providerId: string): string[] {
   if (providerId === "google") {
     candidates.push("GOOGLE_GENERATIVEAI_API_KEY")
   }
+  if (providerId === "opencode-go") {
+    candidates.push("OPENCODE_API_KEY")
+  }
   return candidates
 }
 
@@ -2563,7 +2566,8 @@ export default async function handler(
         } else if (supportsOAuth) {
           authLine = `Auth: not authenticated (run /auth-connect ${providerId})`
         } else {
-          authLine = `Auth: not configured (set ${providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY)`
+          const envVar = providerId === "opencode-go" ? "OPENCODE_API_KEY" : `${providerId.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_API_KEY`
+          authLine = `Auth: not configured (set ${envVar})`
         }
       }
 

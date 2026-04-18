@@ -2,6 +2,7 @@ import { createHmac } from "crypto"
 import nacl from "tweetnacl"
 import { waitUntil } from "@vercel/functions"
 import { Sandbox, Snapshot } from "@vercel/sandbox"
+import sharp from "sharp"
 import { sendDiscordRateLimitedRequest } from "../../src/discord-rate-limited-fetch.js"
 import type { SandboxContext } from "../../src/sandbox-manager.js"
 
@@ -40,6 +41,12 @@ type Interaction = {
   message?: {
     id: string
     parent_id?: string
+    attachments?: Array<{
+      id: string
+      filename: string
+      content_type?: string
+      url: string
+    }>
   }
   data: {
     custom_id?: string
@@ -720,6 +727,7 @@ interface AskQueueRunRequest {
   channelId: string
   userId: string
   prompt: string
+  imagePaths?: string[]
 }
 
 function parseTodoItems(value: unknown): Array<{ content: string; status: string }> {
@@ -2264,13 +2272,66 @@ async function processAskInteraction(interaction: Interaction, prompt: string, o
 
     await updateOriginalResponse(interaction.application_id, interaction.token, statusMessage)
     logAskStage("ask_executing", { threadId: channelId, interactionId: interaction.id })
+
+    const imagePaths: string[] = []
+    const attachments = interaction.message?.attachments ?? []
+    const imageAttachments = attachments.filter((a: { content_type?: string }) => a.content_type?.startsWith("image/"))
+
+    if (imageAttachments.length > 0 && runtimeState.sandboxName) {
+      const { getSandboxManager } = await import("../../src/sandbox-manager.js")
+
+      const sandboxManager = getSandboxManager()
+      let sandboxContext: SandboxContext | null = null
+
+      try {
+        sandboxContext = await sandboxManager.getOrCreate(
+          channelId,
+          runtimeState.sandboxName,
+          undefined,
+          "main",
+          runtimeState.opencodePassword,
+        )
+      } catch {
+        console.error("Could not get sandbox context for image upload")
+      }
+
+      if (sandboxContext) {
+        for (let i = 0; i < imageAttachments.length; i++) {
+          const attachment = imageAttachments[i]
+          const targetPath = `/vercel/sandbox/images/${Date.now()}-${i}-${attachment.filename.replace(/[^a-zA-Z0-9._-]/g, "_")}.webp`
+
+          try {
+            const response = await fetch(attachment.url)
+            if (!response.ok) {
+              console.error("Failed to download image:", response.status)
+              continue
+            }
+
+            const buffer = Buffer.from(await response.arrayBuffer())
+            const webpBuffer = await sharp(buffer).webp({ quality: 85 }).toBuffer()
+
+            await sandboxManager.uploadImage(channelId, webpBuffer, targetPath)
+            imagePaths.push(targetPath)
+
+            logAskStage("image_uploaded", { path: targetPath, size: webpBuffer.length })
+          } catch (error) {
+            console.error("Image processing failed:", error)
+          }
+        }
+      }
+    }
+
+    const imageContext = imagePaths.length > 0
+      ? `\n\nImages attached (analyze these files):\n${imagePaths.map((p) => `[Image: ${p}]`).join("\n")}`
+      : ""
+
     await executeQueuedAskRun({
       interactionId: interaction.id,
       applicationId: interaction.application_id,
       token: interaction.token,
       channelId: channelId,
       userId: userId,
-      prompt: prompt,
+      prompt: prompt + imageContext,
     })
     logAskStage("ask_done", { threadId: channelId, interactionId: interaction.id })
   } catch (error) {

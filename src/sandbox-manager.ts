@@ -902,6 +902,21 @@ export class SandboxManager {
     return undefined
   }
 
+  async uploadImage(
+    channelId: string,
+    imageBuffer: Buffer,
+    targetPath: string,
+  ): Promise<void> {
+    const context = this.cache.get(channelId)
+    if (!context) {
+      throw new Error("No sandbox context found for channel")
+    }
+
+    const sandbox = await Sandbox.get({ name: context.name } as unknown as Parameters<typeof Sandbox.get>[0])
+    await sandbox.writeFiles([{ path: targetPath, content: imageBuffer }])
+    console.log(`[SandboxManager] Uploaded image to ${targetPath}, size=${imageBuffer.length}`)
+  }
+
   async stop(channelId: string, sandboxNameFromState?: string): Promise<void> {
     const context = this.cache.get(channelId)
     const sandboxName = context?.name || sandboxNameFromState

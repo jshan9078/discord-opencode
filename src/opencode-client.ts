@@ -152,7 +152,7 @@ export interface OpencodeClient {
       body: {
         model: { providerID: string; modelID: string }
         system?: string
-        parts: Array<{ type: "text"; text: string }>
+        parts: Array<{ type: "text"; text: string } | { type: "image"; path: string }>
       }
     }): Promise<void>
     diff(input: { path: { id: string }; query?: { messageID?: string } }): Promise<Array<{ file?: string }>>
@@ -182,15 +182,24 @@ function createRuntimeClient(sdk: SdkClient, baseUrl: string, password?: string)
       get: async (input) => await sdk.session.get(input as never),
       messages: async (input) => extractData<Array<{ info?: Record<string, unknown>; parts?: unknown[] }>>(await sdk.session.messages(input as never)),
       promptAsync: async (input) => {
-        const safeParts = Array.isArray(input.body?.parts) && input.body.parts.length > 0
-          ? input.body.parts
-          : [{ type: "text" as const, text: "" }]
+        const parts = input.body?.parts ?? []
+        const textParts: string[] = []
+
+        for (const part of parts) {
+          if (part.type === "text") {
+            textParts.push(part.text)
+          } else if (part.type === "image") {
+            textParts.push(`[Image: ${part.path}]`)
+          }
+        }
+
+        const finalText = textParts.join("\n\n")
 
         const result = await sdk.session.promptAsync({
           path: { id: input.path.id },
           body: {
             ...input.body,
-            parts: safeParts,
+            parts: [{ type: "text" as const, text: finalText }],
           },
         } as never)
 

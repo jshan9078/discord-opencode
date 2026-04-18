@@ -49,6 +49,7 @@ export async function executePromptForChannel(
     providerAuth?: Record<string, unknown>
     runtimeContext?: string
     cwd?: string
+    images?: string[]
   } = {},
 ): Promise<
   | {
@@ -141,6 +142,8 @@ export async function executePromptForChannel(
     maxIdleMs: 45_000,
     maxTotalMs: 10 * 60_000,
   })
+
+  const imageParts = (options.images ?? []).map((path) => ({ type: "image" as const, path }))
   const finalPrompt = options.recoveryContext
     ? [
         "Context recovery note: Use the following Discord channel history summary to reconstruct prior intent. Treat it as approximate context and continue naturally.",
@@ -155,7 +158,7 @@ export async function executePromptForChannel(
       ? [options.runtimeContext, "", prompt].join("\n")
       : prompt
 
-  logPromptStage("prompt_async_start", { threadId, sessionId, providerId, modelId })
+  logPromptStage("prompt_async_start", { threadId, sessionId, providerId, modelId, imageCount: imageParts.length })
   await client.session.promptAsync({
     path: { id: sessionId },
     body: {
@@ -163,7 +166,7 @@ export async function executePromptForChannel(
         providerID: providerId,
         modelID: modelId,
       },
-      parts: [{ type: "text", text: finalPrompt }],
+      parts: [{ type: "text" as const, text: finalPrompt }, ...imageParts],
     },
   })
   logPromptStage("prompt_async_done", { threadId, sessionId })

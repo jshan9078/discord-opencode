@@ -2062,6 +2062,7 @@ async function executeQueuedAskRun(run: AskQueueRunRequest): Promise<void> {
         providerAuth,
         runtimeContext,
         cwd: sessionCwd,
+        images: run.imagePaths,
       },
     )
 
@@ -2356,6 +2357,7 @@ async function processAskInteraction(
       channelId: channelId,
       userId: userId,
       prompt: prompt + imageContext,
+      imagePaths,
     })
     logAskStage("ask_done", { threadId: channelId, interactionId: interaction.id })
   } catch (error) {

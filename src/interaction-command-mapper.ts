@@ -57,6 +57,7 @@ function extractAttachmentsFromOptions(options: InteractionOption[] | undefined)
 
 export function mapInteractionCommandToText(
   data: InteractionCommandData,
+  attachments?: Array<{ id: string; filename: string; content_type?: string; url: string }>,
 ): { type: "command" | "prompt"; text: string; attachments?: Array<{ url: string; filename: string; content_type?: string }> } {
   const commandName = data.name
   switch (commandName) {
@@ -65,12 +66,29 @@ export function mapInteractionCommandToText(
       console.info("mapInteractionCommandToText /ask raw data", {
         hasOptions: Boolean(data.options),
         optionsCount: data.options?.length ?? 0,
-        optionsDetails: data.options?.map((o) => ({ name: o.name, type: o.type, value: o.value, hasAttachments: Boolean(o.attachments), attachmentsCount: o.attachments?.length ?? 0, attachments: o.attachments?.map((a) => ({ id: a.id, filename: a.filename, url: a.url, content_type: a.content_type })) })),
+        optionsDetails: data.options?.map((o) => ({
+          name: o.name,
+          type: o.type,
+          value: o.value,
+          hasAttachments: Boolean(o.attachments),
+          attachmentsCount: o.attachments?.length ?? 0,
+          attachments: o.attachments?.map((a) => ({ id: a.id, filename: a.filename, url: a.url, content_type: a.content_type })),
+        })),
         hasDataAttachments: Boolean(data.attachments),
         dataAttachmentsCount: data.attachments?.length ?? 0,
         dataAttachments: data.attachments?.map((a) => ({ id: a.id, filename: a.filename, url: a.url, content_type: a.content_type })),
+        hasAttachmentsParam: Boolean(attachments),
+        attachmentsParamCount: attachments?.length ?? 0,
+        attachmentsParam: attachments?.map((a) => ({ id: a.id, filename: a.filename, url: a.url, content_type: a.content_type })),
       })
-      const images = extractAttachmentsFromOptions(data.options) ?? data.attachments
+
+      const extractedFromOptions = extractAttachmentsFromOptions(data.options)
+      const images = extractedFromOptions ?? data.attachments ?? attachments?.filter((a) => a.url)
+
+      if ((!images || images.length === 0) && attachments && attachments.length > 0) {
+        console.info("mapInteractionCommandToText using attachments param as fallback", { count: attachments.length })
+      }
+
       console.info("mapInteractionCommandToText /ask extracted images", { images: images?.map((i) => ({ url: i.url, filename: i.filename })) })
       return { type: "prompt", text: prompt, attachments: images }
     }

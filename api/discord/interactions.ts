@@ -2454,7 +2454,7 @@ export default async function handler(
       import("../../src/oauth-token-store.js"),
     ])
 
-    const mapped = mapInteractionCommandToText(interaction.data)
+    const mapped = mapInteractionCommandToText(interaction.data, interaction.data.attachments)
     console.info("After mapInteractionCommandToText", {
       type: mapped.type,
       textLength: mapped.text.length,

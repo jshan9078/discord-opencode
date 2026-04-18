@@ -65,6 +65,14 @@ type Interaction = {
       content_type?: string
       url: string
     }>
+    resolved?: {
+      attachments?: Record<string, {
+        id: string
+        filename: string
+        content_type?: string
+        url: string
+      }>
+    }
   }
 }
 

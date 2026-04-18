@@ -24,6 +24,14 @@ interface InteractionCommandData {
     content_type?: string
     url: string
   }>
+  resolved?: {
+    attachments?: Record<string, {
+      id: string
+      filename: string
+      content_type?: string
+      url: string
+    }>
+  }
 }
 
 function optionValue(data: InteractionCommandData, name: string): string | undefined {
@@ -88,13 +96,20 @@ export function mapInteractionCommandToText(
         hasDataAttachments: Boolean(data.attachments),
         dataAttachmentsCount: data.attachments?.length ?? 0,
         dataAttachments: data.attachments?.map((a) => ({ id: a.id, filename: a.filename, url: a.url, content_type: a.content_type })),
+        hasResolved: Boolean(data.resolved?.attachments),
+        resolvedAttachments: data.resolved?.attachments
+          ? Object.values(data.resolved.attachments).map((a) => ({ id: a.id, filename: a.filename, url: a.url, content_type: a.content_type }))
+          : undefined,
         hasAttachmentsParam: Boolean(attachments),
         attachmentsParamCount: attachments?.length ?? 0,
         attachmentsParam: attachments?.map((a) => ({ id: a.id, filename: a.filename, url: a.url, content_type: a.content_type })),
       })
 
       const extractedFromOptions = extractAttachmentsFromOptions(data.options, attachments)
-      const images = extractedFromOptions ?? data.attachments ?? attachments?.filter((a) => a.url)
+      const resolvedAttachments = data.resolved?.attachments
+        ? Object.values(data.resolved.attachments).map((a) => ({ url: a.url, filename: a.filename, content_type: a.content_type }))
+        : undefined
+      const images = extractedFromOptions ?? data.attachments ?? attachments?.filter((a) => a.url) ?? resolvedAttachments
 
       if ((!images || images.length === 0) && attachments && attachments.length > 0) {
         console.info("mapInteractionCommandToText using attachments param as fallback", { count: attachments.length })

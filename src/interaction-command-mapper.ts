@@ -37,6 +37,7 @@ function optionValue(data: InteractionCommandData, name: string): string | undef
 function extractAttachmentsFromOptions(
   options: InteractionOption[] | undefined,
   allAttachments?: Array<{ id: string; filename: string; content_type?: string; url: string }>,
+  channelId?: string,
 ): Array<{ url: string; filename: string; content_type?: string }> | undefined {
   if (!options) return undefined
 
@@ -54,6 +55,10 @@ function extractAttachmentsFromOptions(
         if (matched) {
           allAtt.push({ url: matched.url, filename: matched.filename, content_type: matched.content_type })
         }
+      } else if (opt.value && channelId) {
+        const attachmentId = String(opt.value)
+        const constructedUrl = `https://cdn.discordapp.com/attachments/${channelId}/${attachmentId}/unknown`
+        allAtt.push({ url: constructedUrl, filename: `attachment_${attachmentId}`, content_type: undefined })
       }
     }
   }

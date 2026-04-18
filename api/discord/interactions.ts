@@ -2464,7 +2464,35 @@ export default async function handler(
     const parsed = parseDiscordCommand(mapped.text)
 
     if (mapped.type === "prompt") {
-      const imageAttachments = mapped.attachments ?? interaction.data.attachments ?? []
+      let imageAttachments = mapped.attachments ?? []
+
+      if (imageAttachments.length === 0 && interaction.message?.id && interaction.channel_id) {
+        try {
+          const messageResponse = await fetch(
+            `https://discord.com/api/v10/channels/${interaction.channel_id}/messages/${interaction.message.id}`,
+            {
+              headers: {
+                Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
+                "Content-Type": "application/json",
+              },
+            },
+          )
+          if (messageResponse.ok) {
+            const messageData = await messageResponse.json()
+            if (messageData.attachments && messageData.attachments.length > 0) {
+              imageAttachments = messageData.attachments.map((a: { id: string; filename: string; content_type?: string; url: string }) => ({
+                url: a.url,
+                filename: a.filename,
+                content_type: a.content_type,
+              }))
+              console.info("Fetched attachments from message", { count: imageAttachments.length })
+            }
+          }
+        } catch (error) {
+          console.error("Failed to fetch message for attachments:", error)
+        }
+      }
+
       waitUntil(processAskInteraction(interaction, mapped.text, origin, imageAttachments))
       await sendNodeResponse(res, json({ type: 5 }))
       return

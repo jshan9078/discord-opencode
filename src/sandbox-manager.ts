@@ -487,7 +487,7 @@ export class SandboxManager {
     console.log("[SandboxManager] Installing Playwright system dependencies")
     const result = await sandbox.runCommand({
       cmd: "sudo",
-      args: ["dnf", "install", "-y", "nss", "nspr", "atk", "at-spi2-atk", "at-spi2-core", "libdrm", "libxkbcommon", "libXcomposite", "libXdamage", "libXrandr", "mesa-libgbm", "pango", "cairo", "alsa-lib"],
+      args: ["dnf", "install", "-y", "nss", "nspr", "atk", "at-spi2-atk", "at-spi2-core", "libdrm", "libxkbcommon", "libXcomposite", "libXdamage", "libXrandr", "mesa-libgbm", "pango", "cairo", "alsa-lib", "cups-libs"],
     })
 
     const stdout = await result.stdout()

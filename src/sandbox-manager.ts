@@ -178,6 +178,7 @@ export class SandboxManager {
     await this.ensureOpenCodeInstalled(sandbox)
     await this.ensureGitHubCliInstalled(sandbox)
     await this.ensureUvInstalled(sandbox)
+    await this.installPlaywrightDeps(sandbox)
     await this.injectUserConfig(sandbox)
     const snapshot = await sandbox.snapshot(
       expirationMs !== undefined
@@ -480,6 +481,23 @@ export class SandboxManager {
     }
 
     console.log("[SandboxManager] uv installed successfully")
+  }
+
+  private async installPlaywrightDeps(sandbox: Sandbox): Promise<void> {
+    console.log("[SandboxManager] Installing Playwright system dependencies")
+    const result = await sandbox.runCommand({
+      cmd: "sudo",
+      args: ["dnf", "install", "-y", "nss", "nspr", "atk", "at-spi2-atk", "at-spi2-core", "libdrm", "libxkbcommon", "libXcomposite", "libXdamage", "libXrandr", "mesa-libgbm", "pango", "cairo", "alsa-lib"],
+    })
+
+    const stdout = await result.stdout()
+    const stderr = await result.stderr()
+    if (result.exitCode !== 0) {
+      console.log(`[SandboxManager] Playwright deps install output: ${stdout}`)
+      throw new Error(`Playwright dependencies installation failed: ${stderr || stdout}`)
+    }
+
+    console.log("[SandboxManager] Playwright system dependencies installed")
   }
 
   private async ensureGitHubCliInstalled(sandbox: Sandbox): Promise<void> {
